@@ -738,22 +738,8 @@ local function teleportToNeutralNPC(model)
 	character:PivotTo(CFrame.new(targetPos, targetPart.Position))
 end
 
-local function isTeamNPCTargetTypeAllowed(targetType)
-	local teamFolder = getPlayerTeamFolder()
-
-	if teamFolder == "Orc" then
-		return targetType == "Human" or targetType == "Neutral"
-	elseif teamFolder == "Human" then
-		return targetType == "Orc" or targetType == "Neutral"
-	elseif teamFolder == "Neutral" then
-		return targetType == "Neutral"
-	end
-
-	return false
-end
-
 local function isCurrentTeamNPCTargetValid(model, targetType)
-	if not isTeamNPCTargetTypeAllowed(targetType) then
+	if not model then
 		return false
 	end
 
@@ -780,61 +766,35 @@ local function getClosestAllowedTeamNPC()
 	local bestType = nil
 	local bestDistance = nil
 
-	local function considerModel(model, targetType, validator)
-		if not validator(model) then
+	local function considerContainer(container, targetType, validator)
+		if not container then
 			return
 		end
 
-		local targetPart = getTargetPartFromModel(model)
-		if not targetPart then
-			return
-		end
+		for _, model in ipairs(container:GetChildren()) do
+			if validator(model) then
+				local targetPart = getTargetPartFromModel(model)
+				if targetPart then
+					local distance = (root.Position - targetPart.Position).Magnitude
 
-		local distance = (root.Position - targetPart.Position).Magnitude
-		if not bestDistance or distance < bestDistance then
-			bestDistance = distance
-			bestModel = model
-			bestType = targetType
+					if not bestDistance or distance < bestDistance then
+						bestDistance = distance
+						bestModel = model
+						bestType = targetType
+					end
+				end
+			end
 		end
 	end
 
 	if teamFolder == "Orc" then
-		local humanContainer = getHumanContainer()
-		if humanContainer then
-			for _, model in ipairs(humanContainer:GetChildren()) do
-				considerModel(model, "Human", isValidHumanNPCModel)
-			end
-		end
-
-		local neutralContainer = getNeutralContainer()
-		if neutralContainer then
-			for _, model in ipairs(neutralContainer:GetChildren()) do
-				considerModel(model, "Neutral", isValidNeutralNPCModel)
-			end
-		end
-
+		considerContainer(getHumanContainer(), "Human", isValidHumanNPCModel)
+		considerContainer(getNeutralContainer(), "Neutral", isValidNeutralNPCModel)
 	elseif teamFolder == "Human" then
-		local orcContainer = getOrcContainer()
-		if orcContainer then
-			for _, model in ipairs(orcContainer:GetChildren()) do
-				considerModel(model, "Orc", isValidOrcNPCModel)
-			end
-		end
-
-		local neutralContainer = getNeutralContainer()
-		if neutralContainer then
-			for _, model in ipairs(neutralContainer:GetChildren()) do
-				considerModel(model, "Neutral", isValidNeutralNPCModel)
-			end
-		end
-
+		considerContainer(getOrcContainer(), "Orc", isValidOrcNPCModel)
+		considerContainer(getNeutralContainer(), "Neutral", isValidNeutralNPCModel)
 	elseif teamFolder == "Neutral" then
-		local neutralContainer = getNeutralContainer()
-		if neutralContainer then
-			for _, model in ipairs(neutralContainer:GetChildren()) do
-				considerModel(model, "Neutral", isValidNeutralNPCModel)
-			end
-		end
+		considerContainer(getNeutralContainer(), "Neutral", isValidNeutralNPCModel)
 	end
 
 	return bestModel, bestType
