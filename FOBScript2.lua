@@ -1,348 +1,304 @@
+-- AutoEggFarming GUI (client-side)
+-- Paste into a LocalScript (StarterPlayerScripts or similar)
+-- Uses the same sword-equip / :Activate() approach as your existing script.
+
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-
 local player = Players.LocalPlayer
+local RunService = game:GetService("RunService")
 
-local EGG_NAMES = {
-	"Blue Egg",
-	"Green Egg",
-	"Pink Egg",
-	"Yellow Egg",
-	"Shiny Red Egg",
-	"Shiny Pink Egg",
-	"Shiny Green Egg",
-	"Golden Egg",
+-- Config
+local CONFIG = {
+    SwordName = "Greatsword of Flying II", -- matches your backpack path
+    TeleportOffset = Vector3.new(0, 4, 0),
+    ClickInterval = 0.12,
+    EggParentPath = {"Unbreakable", "Characters", "Undead"}, -- base path to eggs
+    EggNames = {
+        "Blue Egg",
+        "Green Egg",
+        "Pink Egg",
+        "Yellow Egg",
+        "Shiny Red Egg",
+        "Shiny Pink Egg",
+        "Shiny Green Egg",
+        "Golden Egg",
+    },
+    Debug = true,
 }
 
-local scanning = false
-local minimized = false
-
-local dragging = false
-local dragInput = nil
-local dragStart = nil
-local startPos = nil
-
-local function getEggContainer()
-	local unbreakable = workspace:FindFirstChild("Unbreakable")
-	if not unbreakable then
-		return nil
-	end
-
-	local characters = unbreakable:FindFirstChild("Characters")
-	if not characters then
-		return nil
-	end
-
-	local undead = characters:FindFirstChild("Undead")
-	if not undead then
-		return nil
-	end
-
-	return undead
+local function dprint(...)
+    if CONFIG.Debug then
+        print("[AutoEggs]", ...)
+    end
 end
 
-local function getEggModelByName(name)
-	local container = getEggContainer()
-	if not container then
-		return nil
-	end
-
-	local model = container:FindFirstChild(name)
-	if model and model:IsA("Model") then
-		return model
-	end
-
-	return nil
+-- Basic helpers (robustly find player character/humanoid/rootpart)
+local function getCharacter()
+    return player.Character or player.CharacterAdded:Wait()
 end
 
-local function getEggHumanoid(name)
-	local model = getEggModelByName(name)
-	if not model then
-		return nil
-	end
-
-	local humanoid = model:FindFirstChild("Humanoid")
-	if humanoid and humanoid:IsA("Humanoid") then
-		return humanoid
-	end
-
-	return nil
+local function getRoot()
+    local char = getCharacter()
+    return char and char:FindFirstChild("HumanoidRootPart")
 end
 
-local function getEggTargetPart(model)
-	if not model then
-		return nil
-	end
-
-	local hrp = model:FindFirstChild("HumanoidRootPart")
-	if hrp and hrp:IsA("BasePart") then
-		return hrp
-	end
-
-	if model.PrimaryPart and model.PrimaryPart:IsA("BasePart") then
-		return model.PrimaryPart
-	end
-
-	for _, partName in ipairs({"Head", "Torso", "UpperTorso"}) do
-		local part = model:FindFirstChild(partName)
-		if part and part:IsA("BasePart") then
-			return part
-		end
-	end
-
-	return model:FindFirstChildWhichIsA("BasePart")
+local function findEggParent()
+    local cur = workspace
+    for _, name in ipairs(CONFIG.EggParentPath) do
+        cur = cur:FindFirstChild(name)
+        if not cur then return nil end
+    end
+    return cur
 end
 
-local existingGui = player:WaitForChild("PlayerGui"):FindFirstChild("EggTesterGui")
-if existingGui then
-	existingGui:Destroy()
+local function findEggModelByName(name)
+    local parent = findEggParent()
+    if not parent then return nil end
+    return parent:FindFirstChild(name)
 end
 
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "EggTesterGui"
-screenGui.ResetOnSpawn = false
-screenGui.Parent = player:WaitForChild("PlayerGui")
-
-local expandedSize = UDim2.new(0, 320, 0, 360)
-local minimizedSize = UDim2.new(0, 320, 0, 34)
-
-local frame = Instance.new("Frame")
-frame.Size = expandedSize
-frame.Position = UDim2.new(0, 20, 0.5, -180)
-frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-frame.BorderSizePixel = 0
-frame.Parent = screenGui
-
-local frameCorner = Instance.new("UICorner")
-frameCorner.CornerRadius = UDim.new(0, 12)
-frameCorner.Parent = frame
-
-local titleBar = Instance.new("Frame")
-titleBar.Size = UDim2.new(1, 0, 0, 34)
-titleBar.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
-titleBar.BorderSizePixel = 0
-titleBar.Active = true
-titleBar.Parent = frame
-
-local titleCorner = Instance.new("UICorner")
-titleCorner.CornerRadius = UDim.new(0, 12)
-titleCorner.Parent = titleBar
-
-local titleFill = Instance.new("Frame")
-titleFill.Size = UDim2.new(1, 0, 0, 12)
-titleFill.Position = UDim2.new(0, 0, 1, -12)
-titleFill.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
-titleFill.BorderSizePixel = 0
-titleFill.Parent = titleBar
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -44, 1, 0)
-title.Position = UDim2.new(0, 10, 0, 0)
-title.BackgroundTransparency = 1
-title.Text = "Egg Path Tester"
-title.TextColor3 = Color3.new(1, 1, 1)
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Font = Enum.Font.SourceSansBold
-title.TextSize = 20
-title.Parent = titleBar
-
-local minimizeButton = Instance.new("TextButton")
-minimizeButton.Size = UDim2.new(0, 28, 0, 24)
-minimizeButton.Position = UDim2.new(1, -34, 0, 5)
-minimizeButton.BackgroundColor3 = Color3.fromRGB(70, 70, 80)
-minimizeButton.TextColor3 = Color3.new(1, 1, 1)
-minimizeButton.Font = Enum.Font.SourceSansBold
-minimizeButton.TextSize = 22
-minimizeButton.Text = "-"
-minimizeButton.BorderSizePixel = 0
-minimizeButton.Parent = titleBar
-
-local minimizeCorner = Instance.new("UICorner")
-minimizeCorner.CornerRadius = UDim.new(0, 8)
-minimizeCorner.Parent = minimizeButton
-
-local content = Instance.new("ScrollingFrame")
-content.Size = UDim2.new(1, -12, 1, -46)
-content.Position = UDim2.new(0, 6, 0, 40)
-content.BackgroundTransparency = 1
-content.BorderSizePixel = 0
-content.ScrollBarThickness = 6
-content.CanvasSize = UDim2.new(0, 0, 0, 0)
-content.AutomaticCanvasSize = Enum.AutomaticSize.Y
-content.Parent = frame
-
-local padding = Instance.new("UIPadding")
-padding.PaddingLeft = UDim.new(0, 4)
-padding.PaddingRight = UDim.new(0, 4)
-padding.PaddingTop = UDim.new(0, 2)
-padding.PaddingBottom = UDim.new(0, 6)
-padding.Parent = content
-
-local layout = Instance.new("UIListLayout")
-layout.Padding = UDim.new(0, 8)
-layout.FillDirection = Enum.FillDirection.Vertical
-layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-layout.SortOrder = Enum.SortOrder.LayoutOrder
-layout.Parent = content
-
-local function createLabel(text, height, size, bold)
-	local label = Instance.new("TextLabel")
-	label.Size = UDim2.new(1, -8, 0, height or 24)
-	label.BackgroundTransparency = 1
-	label.Text = text or ""
-	label.TextColor3 = Color3.fromRGB(220, 220, 220)
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.TextYAlignment = Enum.TextYAlignment.Top
-	label.TextWrapped = true
-	label.Font = bold and Enum.Font.SourceSansBold or Enum.Font.SourceSans
-	label.TextSize = size or 18
-	label.Parent = content
-	return label
+local function getTargetPartFromEggModel(model)
+    if not model then return nil end
+    -- Prefer HumanoidRootPart
+    if model:FindFirstChild("HumanoidRootPart") then
+        return model.HumanoidRootPart
+    end
+    -- Some eggs may be a single part or have PrimaryPart
+    if model.PrimaryPart and model.PrimaryPart:IsA("BasePart") then
+        return model.PrimaryPart
+    end
+    -- fallback to any BasePart
+    for _, child in ipairs(model:GetChildren()) do
+        if child:IsA("BasePart") then
+            return child
+        end
+    end
+    return nil
 end
 
-local function createButton(text)
-	local button = Instance.new("TextButton")
-	button.Size = UDim2.new(1, -8, 0, 40)
-	button.BackgroundColor3 = Color3.fromRGB(65, 65, 75)
-	button.TextColor3 = Color3.new(1, 1, 1)
-	button.Font = Enum.Font.SourceSansBold
-	button.TextSize = 20
-	button.Text = text
-	button.BorderSizePixel = 0
-	button.Parent = content
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
-	corner.Parent = button
-
-	return button
+-- Tool/equip helpers (copied/adjusted from your original approach)
+local function findRealTool(toolName)
+    local character = getCharacter()
+    -- Tools folder (if used)
+    local toolsFolder = player:FindFirstChild("Tools")
+    if toolsFolder then
+        local t = toolsFolder:FindFirstChild(toolName)
+        if t and t:IsA("Tool") then return t end
+    end
+    -- equipped tool on model
+    local equipped = character:FindFirstChild(toolName)
+    if equipped and equipped:IsA("Tool") then return equipped end
+    -- backpack
+    local backpack = player:FindFirstChildOfClass("Backpack")
+    if backpack then
+        local b = backpack:FindFirstChild(toolName)
+        if b and b:IsA("Tool") then return b end
+    end
+    return nil
 end
 
-local statusLabel = createLabel("Status: Idle", 24, 18, false)
-local scanButton = createButton("Live Scan: OFF")
-local refreshButton = createButton("Refresh Egg Check")
-local foundHeader = createLabel("Egg Results", 24, 18, true)
-local foundLabel = createLabel("No scan yet.", 220, 16, false)
-
-local function updateDrag(input)
-	local delta = input.Position - dragStart
-	frame.Position = UDim2.new(
-		startPos.X.Scale,
-		startPos.X.Offset + delta.X,
-		startPos.Y.Scale,
-		startPos.Y.Offset + delta.Y
-	)
+local function getHumanoid()
+    local char = getCharacter()
+    return char and char:FindFirstChildOfClass("Humanoid")
 end
 
-titleBar.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		dragging = true
-		dragStart = input.Position
-		startPos = frame.Position
-		dragInput = input
+local function equipToolByName(toolName)
+    local humanoid = getHumanoid()
+    if not humanoid then return nil end
+    local tool = findRealTool(toolName)
+    if not tool then
+        return nil
+    end
+    if tool.Parent ~= getCharacter() then
+        -- Equip from backpack
+        humanoid:EquipTool(tool)
+        task.wait(0.12)
+    end
+    -- return reference to the tool instance (now parented to character)
+    return getCharacter():FindFirstChild(toolName) or tool
+end
 
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				dragging = false
-				dragInput = nil
-			end
-		end)
-	end
+-- Teleport helper (client-side pivot)
+local function teleportToPosition(pos, lookAt)
+    local char = getCharacter()
+    if not char then return end
+    local root = getRoot()
+    if not root then return end
+    local cf
+    if lookAt then
+        cf = CFrame.new(pos, lookAt)
+    else
+        cf = CFrame.new(pos)
+    end
+    -- Use PivotTo to avoid velocity issues
+    if char.PrimaryPart then
+        char:PivotTo(cf)
+    else
+        -- fallback: set HumanoidRootPart CFrame
+        root.CFrame = cf
+    end
+end
+
+-- Main attack loop for a single egg model
+local function attackEggModel(eggModel)
+    if not eggModel then return end
+
+    local targetPart = getTargetPartFromEggModel(eggModel)
+    if not targetPart then
+        dprint("No target part for egg:", eggModel.Name)
+        return
+    end
+
+    -- Teleport near the egg
+    local targetPos = targetPart.Position + CONFIG.TeleportOffset
+    teleportToPosition(targetPos, targetPart.Position)
+    task.wait(0.06) -- small wait to ensure pivot finished
+
+    -- Try to get the egg's humanoid (some eggs may contain a Humanoid)
+    local eggHumanoid = eggModel:FindFirstChildOfClass("Humanoid")
+    -- Equip sword
+    local sword = equipToolByName(CONFIG.SwordName)
+    if not sword then
+        dprint("Could not find sword:", CONFIG.SwordName, "Make sure it's in Backpack or Tools.")
+        return
+    end
+
+    -- Rapidly activate sword until egg is gone or timeout/interrupt
+    local startTime = tick()
+    local timeout = 10 -- seconds max per egg to avoid infinite loops (adjust if needed)
+
+    while true do
+        -- If the egg model no longer exists, break
+        if not eggModel.Parent then
+            dprint("Egg removed (destroyed):", eggModel.Name)
+            break
+        end
+
+        -- If egg has humanoid, stop when health <= 0
+        if eggHumanoid then
+            if eggHumanoid.Health <= 0 then
+                dprint("Egg humanoid died:", eggModel.Name)
+                break
+            end
+        end
+
+        -- Activate the sword (client-side)
+        local ok, err = pcall(function()
+            if sword and sword:IsA("Tool") then
+                sword:Activate()
+            end
+        end)
+        if not ok then
+            dprint("Activate failed:", tostring(err))
+        end
+
+        -- Safety timeout
+        if tick() - startTime > timeout then
+            dprint("Timed out on egg:", eggModel.Name)
+            break
+        end
+
+        task.wait(CONFIG.ClickInterval)
+    end
+end
+
+-- Iterate through configured egg list (returns next available model or nil)
+local function getNextEggModel(currentIndex)
+    local parent = findEggParent()
+    if not parent then return nil, currentIndex end
+    local n = #CONFIG.EggNames
+    if n == 0 then return nil, currentIndex end
+    local nextIndex = (currentIndex or 1)
+    local tries = 0
+    while tries < n do
+        local name = CONFIG.EggNames[nextIndex]
+        local model = parent:FindFirstChild(name)
+        if model then
+            return model, nextIndex
+        end
+        -- advance
+        nextIndex = nextIndex + 1
+        if nextIndex > n then nextIndex = 1 end
+        tries = tries + 1
+    end
+    return nil, nextIndex
+end
+
+-- Build a small GUI with a toggle button
+local function createGui()
+    -- destroy existing gui if present
+    local existing = player:WaitForChild("PlayerGui"):FindFirstChild("AutoEggsGui")
+    if existing then existing:Destroy() end
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "AutoEggsGui"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 220, 0, 80)
+    frame.Position = UDim2.new(0, 16, 0.6, -40)
+    frame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+
+    local corner = Instance.new("UICorner")
+    corner.Parent = frame
+    corner.CornerRadius = UDim.new(0, 10)
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -12, 0, 28)
+    title.Position = UDim2.new(0, 6, 0, 6)
+    title.BackgroundTransparency = 1
+    title.Text = "Auto Egg Farmer"
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 18
+    title.TextColor3 = Color3.new(1, 1, 1)
+    title.Parent = frame
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -12, 0, 40)
+    btn.Position = UDim2.new(0, 6, 0, 36)
+    btn.BackgroundColor3 = Color3.fromRGB(55, 120, 70)
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.Font = Enum.Font.SourceSansBold
+    btn.TextSize = 18
+    btn.Text = "Auto Eggs: OFF"
+    btn.Parent = frame
+
+    return screenGui, btn
+end
+
+-- Main toggle & runner
+local autoEggs = false
+local gui, toggleBtn = createGui()
+local currentEggIndex = 1
+
+toggleBtn.MouseButton1Click:Connect(function()
+    autoEggs = not autoEggs
+    toggleBtn.Text = autoEggs and "Auto Eggs: ON" or "Auto Eggs: OFF"
 end)
 
-titleBar.InputChanged:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-		dragInput = input
-	end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-	if dragging and input == dragInput then
-		updateDrag(input)
-	end
-end)
-
-local function buildEggReport()
-	local lines = {}
-	local foundCount = 0
-	local container = getEggContainer()
-
-	if not container then
-		return "Undead container not found:\nworkspace.Unbreakable.Characters.Undead"
-	end
-
-	for _, eggName in ipairs(EGG_NAMES) do
-		local model = getEggModelByName(eggName)
-		local humanoid = getEggHumanoid(eggName)
-
-		if model and humanoid then
-			foundCount += 1
-
-			local targetPart = getEggTargetPart(model)
-			local hpText = "HP: " .. tostring(math.floor(humanoid.Health + 0.5))
-
-			if targetPart then
-				table.insert(lines, "✓ " .. eggName .. " | " .. hpText .. " | TargetPart: " .. targetPart.Name)
-			else
-				table.insert(lines, "✓ " .. eggName .. " | " .. hpText .. " | No target part found")
-			end
-		else
-			table.insert(lines, "✗ " .. eggName .. " | Missing model or Humanoid")
-		end
-	end
-
-	return "Found " .. tostring(foundCount) .. "/" .. tostring(#EGG_NAMES) .. " eggs\n\n" .. table.concat(lines, "\n")
-end
-
-local function updateGui()
-	scanButton.Text = scanning and "Live Scan: ON" or "Live Scan: OFF"
-	scanButton.BackgroundColor3 = scanning and Color3.fromRGB(50, 140, 70) or Color3.fromRGB(65, 65, 75)
-
-	if scanning then
-		statusLabel.Text = "Status: Scanning egg paths"
-	else
-		statusLabel.Text = "Status: Idle"
-	end
-
-	if minimized then
-		frame.Size = minimizedSize
-		content.Visible = false
-		minimizeButton.Text = "+"
-	else
-		frame.Size = expandedSize
-		content.Visible = true
-		minimizeButton.Text = "-"
-	end
-end
-
-scanButton.MouseButton1Click:Connect(function()
-	scanning = not scanning
-	if scanning then
-		foundLabel.Text = buildEggReport()
-	end
-	updateGui()
-end)
-
-refreshButton.MouseButton1Click:Connect(function()
-	foundLabel.Text = buildEggReport()
-	updateGui()
-end)
-
-minimizeButton.MouseButton1Click:Connect(function()
-	minimized = not minimized
-	updateGui()
-end)
-
-updateGui()
-foundLabel.Text = buildEggReport()
-
+-- Background task: auto-farm eggs when toggled on
 task.spawn(function()
-	while true do
-		if scanning then
-			foundLabel.Text = buildEggReport()
-			task.wait(0.5)
-		else
-			task.wait(0.1)
-		end
-	end
+    while true do
+        if autoEggs then
+            local eggModel, idx = getNextEggModel(currentEggIndex)
+            if eggModel then
+                currentEggIndex = idx + 1
+                if currentEggIndex > #CONFIG.EggNames then currentEggIndex = 1 end
+                -- Double-check character exists
+                if not player.Character then
+                    player.CharacterAdded:Wait()
+                end
+                attackEggModel(eggModel)
+                task.wait(0.08)
+            else
+                -- No eggs found: wait longer then retry
+                dprint("No eggs found under path; waiting then retrying.")
+                task.wait(1.2)
+            end
+        else
+            task.wait(0.12)
+        end
+    end
 end)
