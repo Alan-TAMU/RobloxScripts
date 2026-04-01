@@ -1,4 +1,5 @@
--- AutoEggs + AutoEaster (client-side) -- draggable GUI + persistent-per-target behavior
+-- AutoEggs + AutoEaster + AutoCombined (client-side)
+-- draggable GUI + persistent-per-target behavior
 -- Paste into a LocalScript (StarterPlayerScripts)
 
 local Players = game:GetService("Players")
@@ -20,16 +21,16 @@ local CONFIG = {
         "Shiny Pink Egg",
         "Shiny Green Egg",
         "Golden Egg",
-        "Orange Egg", -- existing
+        "Orange Egg",
     },
-    EasterNames = { -- NEW: list of Easter-character model names to search for across teams
+    EasterNames = { -- Easter-character model names to search for across teams
         "Bunny Warrior",
         "Easter Guardian",
         "Carrot Menace",
         "Bunny",
     },
     Debug = true,
-    PerTargetTimeout = 30, -- seconds to spend on a single target before skipping (safety)
+    PerTargetTimeout = 30, -- seconds to spend on a single target before skipping
 }
 
 local function dprint(...)
@@ -105,11 +106,9 @@ local function equipToolByName(toolName)
     local tool = findRealTool(toolName)
     if not tool then return nil end
     if tool.Parent ~= getCharacter() then
-        -- Equip from Backpack or Tools
         humanoid:EquipTool(tool)
         task.wait(0.12)
     end
-    -- return tool instance (should now be parented to character)
     return getCharacter():FindFirstChild(toolName) or tool
 end
 
@@ -150,13 +149,12 @@ end
 
 -- Find next Easter-character model by scanning Characters -> (Orc, Human, Undead) for configured names
 local function getNextEasterModel(currentIndex)
-    -- list of teams to search under Characters
     local charactersRoot = workspace:FindFirstChild("Unbreakable")
     if not charactersRoot then return nil, currentIndex end
     charactersRoot = charactersRoot:FindFirstChild("Characters")
     if not charactersRoot then return nil, currentIndex end
 
-    local teams = {"Orc", "Human", "Undead"} -- search these folders
+    local teams = {"Orc", "Human", "Undead"}
     local names = CONFIG.EasterNames
     local n = #names
     if n == 0 then return nil, currentIndex end
@@ -165,18 +163,13 @@ local function getNextEasterModel(currentIndex)
     local tries = 0
     while tries < n do
         local name = names[nextIndex]
-        -- search each team for this model name or for a nested folder/model "Bunny" etc.
         for _, teamName in ipairs(teams) do
             local teamFolder = charactersRoot:FindFirstChild(teamName)
             if teamFolder then
-                -- direct child with that name
                 local model = teamFolder:FindFirstChild(name)
                 if model then
                     return model, nextIndex
                 end
-                -- also search within teamFolder for a folder named name that itself may contain a Humanoid (e.g., teamFolder.Bunny)
-                -- (teamFolder:FindFirstChild(name) already covers this if Bunny is present)
-                -- Additionally, search children of teamFolder for models whose name contains the name (case-insensitive partial)
                 for _, child in ipairs(teamFolder:GetChildren()) do
                     if child:IsA("Model") and child.Name:lower():find(name:lower()) then
                         return child, nextIndex
@@ -184,8 +177,6 @@ local function getNextEasterModel(currentIndex)
                 end
             end
         end
-
-        -- advance index
         nextIndex = nextIndex + 1
         if nextIndex > n then nextIndex = 1 end
         tries = tries + 1
@@ -194,7 +185,7 @@ local function getNextEasterModel(currentIndex)
     return nil, nextIndex
 end
 
--- Attack a single egg model and persist teleporting until egg gone (used for eggs)
+-- Attack a single model and persist teleporting until removed or humanoid dead or timeout
 local function attackModelPersist(targetModel)
     if not targetModel then return end
 
@@ -204,7 +195,6 @@ local function attackModelPersist(targetModel)
         return
     end
 
-    -- Keep teleporting + activating until removed or humanoid dead or timeout
     local startTime = tick()
     while true do
         if not targetModel.Parent then
@@ -218,11 +208,9 @@ local function attackModelPersist(targetModel)
             break
         end
 
-        -- Teleport near the target each iteration to ensure we stay in range
         local pos = targetPart.Position + CONFIG.TeleportOffset
         teleportToPosition(pos, targetPart.Position)
 
-        -- Equip & activate sword
         local sword = equipToolByName(CONFIG.SwordName)
         if sword and sword:IsA("Tool") then
             pcall(function()
@@ -242,9 +230,8 @@ local function attackModelPersist(targetModel)
     end
 end
 
--- GUI: create small draggable GUI with two buttons (Eggs + Easter)
+-- GUI: create draggable GUI with three buttons (Eggs, Easter, Combined)
 local function createGui()
-    -- remove existing if present
     local existing = player:WaitForChild("PlayerGui"):FindFirstChild("AutoEggsGui")
     if existing then existing:Destroy() end
 
@@ -255,8 +242,8 @@ local function createGui()
 
     local frame = Instance.new("Frame")
     frame.Name = "MainFrame"
-    frame.Size = UDim2.new(0, 260, 0, 128)
-    frame.Position = UDim2.new(0, 24, 0.6, -64)
+    frame.Size = UDim2.new(0, 320, 0, 150)
+    frame.Position = UDim2.new(0, 24, 0.6, -75)
     frame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
@@ -277,28 +264,39 @@ local function createGui()
 
     -- Eggs button
     local eggsBtn = Instance.new("TextButton")
-    eggsBtn.Size = UDim2.new(0.48, -10, 0, 44)
-    eggsBtn.Position = UDim2.new(0, 6, 0, 40)
+    eggsBtn.Size = UDim2.new(0.32, -10, 0, 44)
+    eggsBtn.Position = UDim2.new(0, 6, 0, 44)
     eggsBtn.BackgroundColor3 = Color3.fromRGB(55, 120, 70)
     eggsBtn.TextColor3 = Color3.new(1,1,1)
     eggsBtn.Font = Enum.Font.SourceSansBold
-    eggsBtn.TextSize = 16
+    eggsBtn.TextSize = 14
     eggsBtn.Text = "Auto Eggs: OFF"
     eggsBtn.Parent = frame
 
-    -- Easter button (NEW)
+    -- Easter button
     local easterBtn = Instance.new("TextButton")
-    easterBtn.Size = UDim2.new(0.48, -10, 0, 44)
-    easterBtn.Position = UDim2.new(0.52, 4, 0, 40)
+    easterBtn.Size = UDim2.new(0.32, -10, 0, 44)
+    easterBtn.Position = UDim2.new(0.34, 4, 0, 44)
     easterBtn.BackgroundColor3 = Color3.fromRGB(200, 120, 40)
     easterBtn.TextColor3 = Color3.new(1,1,1)
     easterBtn.Font = Enum.Font.SourceSansBold
-    easterBtn.TextSize = 16
+    easterBtn.TextSize = 14
     easterBtn.Text = "Auto Easter: OFF"
     easterBtn.Parent = frame
 
+    -- Combined button (NEW)
+    local combinedBtn = Instance.new("TextButton")
+    combinedBtn.Size = UDim2.new(0.32, -10, 0, 44)
+    combinedBtn.Position = UDim2.new(0.68, 4, 0, 44)
+    combinedBtn.BackgroundColor3 = Color3.fromRGB(120, 60, 200)
+    combinedBtn.TextColor3 = Color3.new(1,1,1)
+    combinedBtn.Font = Enum.Font.SourceSansBold
+    combinedBtn.TextSize = 14
+    combinedBtn.Text = "Auto Combined: OFF"
+    combinedBtn.Parent = frame
+
     -- Draggable: track input from frame
-    frame.Active = true -- important to receive input events for dragging
+    frame.Active = true
     local dragging = false
     local dragStart = nil
     local startPos = nil
@@ -343,27 +341,57 @@ local function createGui()
         end
     end)
 
-    return screenGui, eggsBtn, easterBtn, frame
+    return screenGui, eggsBtn, easterBtn, combinedBtn, frame
 end
 
 -- Main runner
 local autoEggs = false
 local autoEaster = false
-local gui, eggsBtn, easterBtn = createGui()
+local autoCombined = false
+
+local gui, eggsBtn, easterBtn, combinedBtn = createGui()
 local currentEggIndex = 1
 local currentEasterIndex = 1
 
-eggsBtn.MouseButton1Click:Connect(function()
-    autoEggs = not autoEggs
+-- Helper to set button states consistently (keeps only one mode active when Combined is used)
+local function setModeStates(eggs, easter, combined)
+    autoEggs = eggs
+    autoEaster = easter
+    autoCombined = combined
     eggsBtn.Text = autoEggs and "Auto Eggs: ON" or "Auto Eggs: OFF"
-end)
-
-easterBtn.MouseButton1Click:Connect(function()
-    autoEaster = not autoEaster
     easterBtn.Text = autoEaster and "Auto Easter: ON" or "Auto Easter: OFF"
+    combinedBtn.Text = autoCombined and "Auto Combined: ON" or "Auto Combined: OFF"
+end
+
+-- Eggs toggle
+eggsBtn.MouseButton1Click:Connect(function()
+    -- toggling eggs off will not affect combined; toggling on will turn combined off
+    if autoCombined then
+        setModeStates(false, false, false)
+    end
+    setModeStates(not autoEggs, autoEaster, false)
 end)
 
--- Background loop: pick an egg, persist on it until gone, then move to next.
+-- Easter toggle
+easterBtn.MouseButton1Click:Connect(function()
+    if autoCombined then
+        setModeStates(false, false, false)
+    end
+    setModeStates(autoEggs, not autoEaster, false)
+end)
+
+-- Combined toggle: when enabled, disable the other two to avoid conflicts
+combinedBtn.MouseButton1Click:Connect(function()
+    if not autoCombined then
+        -- turn combined ON, turn others OFF
+        setModeStates(false, false, true)
+    else
+        -- turn combined OFF
+        setModeStates(false, false, false)
+    end
+end)
+
+-- Loop: Eggs-only behavior
 task.spawn(function()
     while true do
         if autoEggs then
@@ -387,7 +415,7 @@ task.spawn(function()
     end
 end)
 
--- Background loop: pick an Easter target, persist on it until gone, then move to next.
+-- Loop: Easter-only behavior
 task.spawn(function()
     while true do
         if autoEaster then
@@ -403,6 +431,45 @@ task.spawn(function()
                 task.wait(0.08)
             else
                 dprint("No Easter targets found, retrying soon...")
+                task.wait(1.2)
+            end
+        else
+            task.wait(0.12)
+        end
+    end
+end)
+
+-- Loop: Combined behavior (egg then easter, repeat)
+task.spawn(function()
+    while true do
+        if autoCombined then
+            if not player.Character then player.CharacterAdded:Wait() end
+
+            -- 1) Try an egg first
+            local eggModel, eggIdx = getNextEggModel(currentEggIndex)
+            if eggModel then
+                currentEggIndex = eggIdx + 1
+                if currentEggIndex > #CONFIG.EggNames then currentEggIndex = 1 end
+
+                dprint("Combined: attacking egg:", eggModel.Name)
+                attackModelPersist(eggModel)
+                task.wait(0.08)
+            end
+
+            -- 2) Then try an Easter target
+            local targetModel, easterIdx = getNextEasterModel(currentEasterIndex)
+            if targetModel then
+                currentEasterIndex = easterIdx + 1
+                if currentEasterIndex > #CONFIG.EasterNames then currentEasterIndex = 1 end
+
+                dprint("Combined: attacking Easter target:", targetModel.Name)
+                attackModelPersist(targetModel)
+                task.wait(0.08)
+            end
+
+            -- If neither found, wait a bit before retrying
+            if not eggModel and not targetModel then
+                dprint("Combined: no targets found, retrying...")
                 task.wait(1.2)
             end
         else
