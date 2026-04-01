@@ -1,20 +1,19 @@
--- AutoFarm with Settings Tab (client-side)
--- Draggable GUI with Main + Settings tabs
+-- AutoFarm (team-aware) — immediate cancel on toggle + advance index only on actual removal/death
 -- Paste into a LocalScript (StarterPlayerScripts)
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 
--- CONFIG (defaults)
+-- CONFIG
 local CONFIG = {
+    PlayerName = "NamiPlaysAM",
     SwordName = "Greatsword of Flying II",
     TeleportOffset = Vector3.new(0, 4, 0),
-    -- TeleportInterval controls how often the script teleports to the current target (seconds)
+
     TeleportInterval = 0.12,
-    -- ClickInterval controls how often the tool:Activate() is called while staying on target (seconds)
     ClickInterval = 0.12,
-    -- target lists
+
     EggParentPath = {"Unbreakable", "Characters", "Undead"},
     EggNames = {
         "Blue Egg","Green Egg","Pink Egg","Yellow Egg",
@@ -24,6 +23,7 @@ local CONFIG = {
     EasterNames = {
         "Bunny Warrior","Easter Guardian","Carrot Menace","Bunny",
     },
+
     Debug = true,
     PerTargetTimeout = 30,
     TeleportIntervalMin = 0.03,
@@ -38,16 +38,20 @@ local function dprint(...)
     end
 end
 
--- Character helpers
+local ENEMIES = {
+    Human = {"Orc", "Undead"},
+    Orc   = {"Human", "Undead"},
+    Undead= {"Human", "Orc"},
+}
+
+-- ---------- basic helpers ----------
 local function getCharacter()
     return player.Character or player.CharacterAdded:Wait()
 end
 local function getHumanoid()
-    local char = getCharacter()
-    return char and char:FindFirstChildOfClass("Humanoid")
+    local c = player.Character
+    return c and c:FindFirstChildOfClass("Humanoid")
 end
-
--- Teleport helper
 local function teleportToPosition(pos, lookAt)
     local char = getCharacter()
     if not char then return end
@@ -61,28 +65,7 @@ local function teleportToPosition(pos, lookAt)
     end
 end
 
--- Find egg parent
-local function findEggParent()
-    local cur = workspace
-    for _, name in ipairs(CONFIG.EggParentPath) do
-        cur = cur:FindFirstChild(name)
-        if not cur then return nil end
-    end
-    return cur
-end
-
--- Get part to teleport to for a model
-local function getTargetPartFromModel(model)
-    if not model then return nil end
-    if model:FindFirstChild("HumanoidRootPart") then return model.HumanoidRootPart end
-    if model.PrimaryPart and model.PrimaryPart:IsA("BasePart") then return model.PrimaryPart end
-    for _, c in ipairs(model:GetChildren()) do
-        if c:IsA("BasePart") then return c end
-    end
-    return nil
-end
-
--- Tool helpers
+-- ---------- tool helpers ----------
 local function findRealTool(toolName)
     local char = player.Character
     if char and char:FindFirstChild(toolName) and char:FindFirstChild(toolName):IsA("Tool") then
@@ -113,7 +96,27 @@ local function equipToolByName(toolName)
     return getCharacter():FindFirstChild(toolName) or tool
 end
 
--- Egg round-robin
+-- ---------- model / target helpers ----------
+local function findEggParent()
+    local cur = workspace
+    for _, name in ipairs(CONFIG.EggParentPath) do
+        cur = cur:FindFirstChild(name)
+        if not cur then return nil end
+    end
+    return cur
+end
+
+local function getTargetPartFromModel(model)
+    if not model then return nil end
+    if model:FindFirstChild("HumanoidRootPart") then return model.HumanoidRootPart end
+    if model.PrimaryPart and model.PrimaryPart:IsA("BasePart") then return model.PrimaryPart end
+    for _, c in ipairs(model:GetChildren()) do
+        if c:IsA("BasePart") then return c end
+    end
+    return nil
+end
+
+-- ---------- round-robin getters ----------
 local function getNextEggModel(currentIndex)
     local parent = findEggParent()
     if not parent then return nil, currentIndex end
@@ -132,13 +135,49 @@ local function getNextEggModel(currentIndex)
     return nil, nextIndex
 end
 
--- Easter search across teams
+-- detect player's team
+local function detectPlayerTeam()
+    local un = workspace:FindFirstChild("Unbreakable")
+    if not un then return nil end
+    local chars = un:FindFirstChild("Characters")
+    if not chars then return nil end
+    local teams = {"Human","Orc","Undead"}
+    for _, team in ipairs(teams) do
+        local folder = chars:FindFirstChild(team)
+        if folder and folder:FindFirstChild(CONFIG.PlayerName) then
+            return team
+        end
+    end
+    if player.Character and player.Character.Parent then
+        local p = player.Character.Parent
+        if p.Name == "Human" or p.Name == "Orc" or p.Name == "Undead" then
+            return p.Name
+        end
+        if p.Parent and p.Parent.Name == "Characters" then
+            local maybeTeam = p.Name
+            if maybeTeam == "Human" or maybeTeam == "Orc" or maybeTeam == "Undead" then
+                return maybeTeam
+            end
+        end
+    end
+    return nil
+end
+
+-- TEAM-AWARE Easter search
 local function getNextEasterModel(currentIndex)
     local un = workspace:FindFirstChild("Unbreakable")
     if not un then return nil, currentIndex end
     local chars = un:FindFirstChild("Characters")
     if not chars then return nil, currentIndex end
-    local teams = {"Orc","Human","Undead"}
+
+    local playerTeam = detectPlayerTeam()
+    local teamsToSearch = {"Orc","Human","Undead"}
+    if playerTeam and ENEMIES[playerTeam] then
+        teamsToSearch = ENEMIES[playerTeam]
+    else
+        dprint("Player team not detected; searching all teams")
+    end
+
     local names = CONFIG.EasterNames
     local n = #names
     if n == 0 then return nil, currentIndex end
@@ -146,13 +185,15 @@ local function getNextEasterModel(currentIndex)
     local tries = 0
     while tries < n do
         local name = names[nextIndex]
-        for _, team in ipairs(teams) do
-            local folder = chars:FindFirstChild(team)
-            if folder then
-                local model = folder:FindFirstChild(name)
-                if model then return model, nextIndex end
-                for _, child in ipairs(folder:GetChildren()) do
-                    if child:IsA("Model") and child.Name:lower():find(name:lower()) then
+        for _, teamName in ipairs(teamsToSearch) do
+            local teamFolder = chars:FindFirstChild(teamName)
+            if teamFolder then
+                local model = teamFolder:FindFirstChild(name)
+                if model and model.Name ~= CONFIG.PlayerName then
+                    return model, nextIndex
+                end
+                for _, child in ipairs(teamFolder:GetChildren()) do
+                    if child:IsA("Model") and child.Name:lower():find(name:lower()) and child.Name ~= CONFIG.PlayerName then
                         return child, nextIndex
                     end
                 end
@@ -162,62 +203,76 @@ local function getNextEasterModel(currentIndex)
         if nextIndex > n then nextIndex = 1 end
         tries = tries + 1
     end
+
     return nil, nextIndex
 end
 
--- Attack a model persistently.
--- Behavior update: teleport every CONFIG.TeleportInterval seconds.
--- During each teleport cycle, call :Activate() repeatedly with CONFIG.ClickInterval spacing.
-local function attackModelPersist(targetModel)
-    if not targetModel then return end
+-- ---------- core attack routine ----------
+-- signature: attackModelPersist(targetModel, shouldContinue)
+-- shouldContinue is a function returning true when we should keep attacking (used to cancel mid-target)
+-- returns one of: "removed", "dead", "timeout", "cancelled", "tool_missing"
+local function attackModelPersist(targetModel, shouldContinue)
+    if not targetModel then return "removed" end -- nothing to do
     local targetPart = getTargetPartFromModel(targetModel)
     if not targetPart then
-        dprint("No target part for model:", tostring(targetModel.Name))
-        return
+        dprint("No target part for:", tostring(targetModel.Name))
+        return "removed"
     end
 
     local startTime = tick()
     while true do
-        if not targetModel.Parent then dprint("Target removed:", targetModel.Name); break end
-        local modelHumanoid = targetModel:FindFirstChildOfClass("Humanoid")
-        if modelHumanoid and modelHumanoid.Health <= 0 then dprint("Target humanoid died:", targetModel.Name); break end
-
-        -- teleport to target
-        teleportToPosition(targetPart.Position + CONFIG.TeleportOffset, targetPart.Position)
-
-        -- equip sword
-        local sword = equipToolByName(CONFIG.SwordName)
-        if not (sword and sword:IsA("Tool")) then
-            dprint("Sword not found while attacking:", CONFIG.SwordName)
-            break
+        -- immediate cancellation check
+        if shouldContinue and not shouldContinue() then
+            dprint("Attack cancelled by toggle for:", targetModel.Name)
+            return "cancelled"
         end
 
-        -- compute how many activations to perform before next teleport
+        -- stop conditions
+        if not targetModel.Parent then
+            dprint("Target removed:", targetModel.Name)
+            return "removed"
+        end
+        local tHum = targetModel:FindFirstChildOfClass("Humanoid")
+        if tHum and tHum.Health <= 0 then
+            dprint("Target dead:", targetModel.Name)
+            return "dead"
+        end
+
+        -- teleport near the target
+        teleportToPosition(targetPart.Position + CONFIG.TeleportOffset, targetPart.Position)
+
+        -- equip and activate sword repeatedly for the configured teleport interval
+        local sword = equipToolByName(CONFIG.SwordName)
+        if not (sword and sword:IsA("Tool")) then
+            dprint("Tool not available:", CONFIG.SwordName)
+            return "tool_missing"
+        end
+
         local teleInt = math.clamp(CONFIG.TeleportInterval, CONFIG.TeleportIntervalMin, CONFIG.TeleportIntervalMax)
         local clickInt = math.clamp(CONFIG.ClickInterval, CONFIG.ClickIntervalMin, CONFIG.ClickIntervalMax)
-        -- ensure at least 1 activation per teleport
         local activations = math.max(1, math.floor(teleInt / clickInt))
 
-        -- rapid-activate loop (stays near target)
         for i = 1, activations do
+            if shouldContinue and not shouldContinue() then
+                dprint("Attack cancelled during activations for:", targetModel.Name)
+                return "cancelled"
+            end
             if not targetModel.Parent then break end
-            local hum = targetModel:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health <= 0 then break end
+            local th = targetModel:FindFirstChildOfClass("Humanoid")
+            if th and th.Health <= 0 then break end
             pcall(function() sword:Activate() end)
             task.wait(clickInt)
         end
 
-        -- safety/timeouts
         if tick() - startTime > CONFIG.PerTargetTimeout then
             dprint("Per-target timeout reached for:", targetModel.Name)
-            break
+            return "timeout"
         end
     end
 end
 
--- GUI creation: Main tab (buttons) + Settings tab (interval adjust)
+-- ---------- GUI (Main + Settings) ----------
 local function createGui()
-    -- remove older GUI if present
     local existing = player:WaitForChild("PlayerGui"):FindFirstChild("AutoEggsGui")
     if existing then existing:Destroy() end
 
@@ -234,8 +289,7 @@ local function createGui()
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
 
-    local corner = Instance.new("UICorner", frame)
-    corner.CornerRadius = UDim.new(0,10)
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
 
     local title = Instance.new("TextLabel", frame)
     title.Size = UDim2.new(1, -12, 0, 28)
@@ -246,7 +300,7 @@ local function createGui()
     title.TextSize = 18
     title.TextColor3 = Color3.new(1,1,1)
 
-    -- Tabs (Main / Settings)
+    -- Tabs
     local tabMainBtn = Instance.new("TextButton", frame)
     tabMainBtn.Size = UDim2.new(0, 120, 0, 28)
     tabMainBtn.Position = UDim2.new(0, 6, 0, 38)
@@ -265,13 +319,12 @@ local function createGui()
     tabSettingsBtn.BackgroundColor3 = Color3.fromRGB(40,40,42)
     tabSettingsBtn.TextColor3 = Color3.new(1,1,1)
 
-    -- Container for tab contents
     local content = Instance.new("Frame", frame)
     content.Size = UDim2.new(1, -12, 1, -76)
     content.Position = UDim2.new(0, 6, 0, 72)
     content.BackgroundTransparency = 1
 
-    -- MAIN tab contents: three buttons (absolute)
+    -- Main pane
     local mainPane = Instance.new("Frame", content)
     mainPane.Size = UDim2.new(1,0,1,0)
     mainPane.BackgroundTransparency = 1
@@ -297,13 +350,12 @@ local function createGui()
     combinedBtn.Font = Enum.Font.SourceSansBold; combinedBtn.TextSize = 14
     combinedBtn.TextColor3 = Color3.new(1,1,1); combinedBtn.Text = "Auto Combined: OFF"
 
-    -- SETTINGS tab contents
+    -- Settings pane
     local settingsPane = Instance.new("Frame", content)
     settingsPane.Size = UDim2.new(1,0,1,0)
     settingsPane.BackgroundTransparency = 1
     settingsPane.Visible = false
 
-    -- Teleport Interval controls
     local tpLabel = Instance.new("TextLabel", settingsPane)
     tpLabel.Size = UDim2.new(0, 220, 0, 22)
     tpLabel.Position = UDim2.new(0, 6, 0, 6)
@@ -321,7 +373,6 @@ local function createGui()
     tpBox.Font = Enum.Font.SourceSans
     tpBox.TextSize = 14
 
-    -- Click Interval controls
     local clLabel = Instance.new("TextLabel", settingsPane)
     clLabel.Size = UDim2.new(0, 220, 0, 22)
     clLabel.Position = UDim2.new(0, 138, 0, 6)
@@ -339,7 +390,6 @@ local function createGui()
     clBox.Font = Enum.Font.SourceSans
     clBox.TextSize = 14
 
-    -- Apply & Reset buttons
     local applyBtn = Instance.new("TextButton", settingsPane)
     applyBtn.Size = UDim2.new(0, 120, 0, 36)
     applyBtn.Position = UDim2.new(0, 6, 0, 72)
@@ -367,7 +417,6 @@ local function createGui()
     infoLabel.Font = Enum.Font.SourceSansItalic
     infoLabel.TextSize = 12
 
-    -- Tab switching
     local function showMain()
         mainPane.Visible = true
         settingsPane.Visible = false
@@ -384,39 +433,36 @@ local function createGui()
     tabMainBtn.MouseButton1Click:Connect(showMain)
     tabSettingsBtn.MouseButton1Click:Connect(showSettings)
 
-    -- Draggable frame
+    -- draggable
     frame.Active = true
-    local dragging, dragStart, startPos, dragInput = false, nil, nil, nil
-    local function updateDrag(input)
-        if not dragging or not dragStart or not startPos then return end
-        local delta = input.Position - dragStart
-        frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    do
+        local dragging, dragStart, startPos, dragInput = false, nil, nil, nil
+        local function updateDrag(input)
+            if not dragging or not dragStart or not startPos then return end
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+        frame.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+                dragStart = input.Position
+                startPos = frame.Position
+                dragInput = input
+                input.Changed:Connect(function()
+                    if input.UserInputState == Enum.UserInputState.End then dragging = false; dragInput = nil end
+                end)
+            end
+        end)
+        frame.InputChanged:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+        end)
+        UserInputService.InputChanged:Connect(function(input) if input == dragInput then updateDrag(input) end end)
     end
-    frame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = frame.Position
-            dragInput = input
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then dragging = false; dragInput = nil end
-            end)
-        end
-    end)
-    frame.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput then updateDrag(input) end
-    end)
 
-    -- return GUI elements we need to wire
     return screenGui, eggsBtn, easterBtn, combinedBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel
 end
 
--- Main state
+-- ---------- main state ----------
 local autoEggs, autoEaster, autoCombined = false, false, false
 local gui, eggsBtn, easterBtn, combinedBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel = createGui()
 local currentEggIndex, currentEasterIndex = 1, 1
@@ -428,7 +474,6 @@ local function setModeStates(eggs, easter, combined)
     combinedBtn.Text = autoCombined and "Auto Combined: ON" or "Auto Combined: OFF"
 end
 
--- button handlers
 eggsBtn.MouseButton1Click:Connect(function()
     if autoCombined then setModeStates(false,false,false) end
     setModeStates(not autoEggs, autoEaster, false)
@@ -438,11 +483,10 @@ easterBtn.MouseButton1Click:Connect(function()
     setModeStates(autoEggs, not autoEaster, false)
 end)
 combinedBtn.MouseButton1Click:Connect(function()
-    if not autoCombined then setModeStates(false,false,true)
-    else setModeStates(false,false,false) end
+    if not autoCombined then setModeStates(false,false,true) else setModeStates(false,false,false) end
 end)
 
--- settings apply/reset logic
+-- Settings apply/reset
 local function applySettingsFromInput()
     local tpVal = tonumber(tpBox.Text)
     local clVal = tonumber(clBox.Text)
@@ -454,91 +498,105 @@ local function applySettingsFromInput()
         clVal = math.clamp(clVal, CONFIG.ClickIntervalMin, CONFIG.ClickIntervalMax)
         CONFIG.ClickInterval = clVal
     end
-    -- update info label
     infoLabel.Text = ("Teleport: %ss    Click: %ss"):format(string.format("%.3f", CONFIG.TeleportInterval), string.format("%.3f", CONFIG.ClickInterval))
-    -- also update textboxes to clamped values
     tpBox.Text = tostring(CONFIG.TeleportInterval)
     clBox.Text = tostring(CONFIG.ClickInterval)
 end
-
 applyBtn.MouseButton1Click:Connect(applySettingsFromInput)
-
 resetBtn.MouseButton1Click:Connect(function()
-    CONFIG.TeleportInterval = 0.12
-    CONFIG.ClickInterval = 0.12
-    tpBox.Text = tostring(CONFIG.TeleportInterval)
-    clBox.Text = tostring(CONFIG.ClickInterval)
+    CONFIG.TeleportInterval = 0.12; CONFIG.ClickInterval = 0.12
+    tpBox.Text = tostring(CONFIG.TeleportInterval); clBox.Text = tostring(CONFIG.ClickInterval)
     infoLabel.Text = ("Teleport: %ss    Click: %ss"):format(tostring(CONFIG.TeleportInterval), tostring(CONFIG.ClickInterval))
 end)
+tpBox.FocusLost:Connect(function(enterPressed) if enterPressed then applySettingsFromInput() end end)
+clBox.FocusLost:Connect(function(enterPressed) if enterPressed then applySettingsFromInput() end end)
 
--- also apply when user edits and leaves textbox (FocusLost)
-tpBox.FocusLost:Connect(function(enterPressed)
-    if not enterPressed then return end
-    applySettingsFromInput()
-end)
-clBox.FocusLost:Connect(function(enterPressed)
-    if not enterPressed then return end
-    applySettingsFromInput()
-end)
+-- ---------- worker loops (advance index ONLY on "removed" or "dead") ----------
 
--- Worker loops (Eggs, Easter, Combined) same behavior as before but using CONFIG.TeleportInterval/ClickInterval
+-- Eggs loop
 task.spawn(function()
     while true do
         if autoEggs then
             if not player.Character then player.CharacterAdded:Wait() end
             local eggModel, idx = getNextEggModel(currentEggIndex)
             if eggModel then
-                currentEggIndex = idx + 1
-                if currentEggIndex > #CONFIG.EggNames then currentEggIndex = 1 end
-                dprint("Attacking egg:", eggModel.Name)
-                attackModelPersist(eggModel)
+                dprint("Found egg:", eggModel.Name, " — attacking until gone (or cancelled)")
+                local status = attackModelPersist(eggModel, function() return autoEggs end)
+                -- only advance if target was actually removed or died
+                if status == "removed" or status == "dead" then
+                    currentEggIndex = (idx % #CONFIG.EggNames) + 1
+                else
+                    dprint("Egg attack ended with status:", status, "- not advancing index")
+                end
                 task.wait(0.08)
             else
                 task.wait(1.2)
             end
-        else task.wait(0.12) end
+        else
+            task.wait(0.12)
+        end
     end
 end)
 
+-- Easter loop (enemy-only)
 task.spawn(function()
     while true do
         if autoEaster then
             if not player.Character then player.CharacterAdded:Wait() end
-            local targetModel, idx = getNextEasterModel(currentEasterIndex)
-            if targetModel then
-                currentEasterIndex = idx + 1
-                if currentEasterIndex > #CONFIG.EasterNames then currentEasterIndex = 1 end
-                dprint("Attacking Easter target:", targetModel.Name)
-                attackModelPersist(targetModel)
+            local model, idx = getNextEasterModel(currentEasterIndex)
+            if model then
+                dprint("Found Easter target:", model.Name, " — attacking until gone (enemy only)")
+                local status = attackModelPersist(model, function() return autoEaster end)
+                if status == "removed" or status == "dead" then
+                    currentEasterIndex = (idx % #CONFIG.EasterNames) + 1
+                else
+                    dprint("Easter attack ended with status:", status, "- not advancing index")
+                end
                 task.wait(0.08)
             else
                 task.wait(1.2)
             end
-        else task.wait(0.12) end
+        else
+            task.wait(0.12)
+        end
     end
 end)
 
+-- Combined loop: egg then enemy-easter; each waits to finish and advances index only on removal/death
 task.spawn(function()
     while true do
         if autoCombined then
             if not player.Character then player.CharacterAdded:Wait() end
+
             local eggModel, eggIdx = getNextEggModel(currentEggIndex)
             if eggModel then
-                currentEggIndex = eggIdx + 1
-                if currentEggIndex > #CONFIG.EggNames then currentEggIndex = 1 end
-                dprint("Combined: egg:", eggModel.Name)
-                attackModelPersist(eggModel)
+                dprint("Combined: attacking egg:", eggModel.Name)
+                local status = attackModelPersist(eggModel, function() return autoCombined end)
+                if status == "removed" or status == "dead" then
+                    currentEggIndex = (eggIdx % #CONFIG.EggNames) + 1
+                else
+                    dprint("Combined egg attack ended with status:", status)
+                end
                 task.wait(0.08)
             end
-            local targetModel, easterIdx = getNextEasterModel(currentEasterIndex)
-            if targetModel then
-                currentEasterIndex = easterIdx + 1
-                if currentEasterIndex > #CONFIG.EasterNames then currentEasterIndex = 1 end
-                dprint("Combined: Easter:", targetModel.Name)
-                attackModelPersist(targetModel)
+
+            local easterModel, easterIdx = getNextEasterModel(currentEasterIndex)
+            if easterModel then
+                dprint("Combined: attacking Easter (enemy only):", easterModel.Name)
+                local status = attackModelPersist(easterModel, function() return autoCombined end)
+                if status == "removed" or status == "dead" then
+                    currentEasterIndex = (easterIdx % #CONFIG.EasterNames) + 1
+                else
+                    dprint("Combined easter attack ended with status:", status)
+                end
                 task.wait(0.08)
             end
-            if not eggModel and not targetModel then task.wait(1.2) end
-        else task.wait(0.12) end
+
+            if not eggModel and not easterModel then
+                task.wait(1.2)
+            end
+        else
+            task.wait(0.12)
+        end
     end
 end)
