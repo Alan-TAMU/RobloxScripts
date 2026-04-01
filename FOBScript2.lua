@@ -1,17 +1,16 @@
--- AutoEggFarming GUI (client-side)
--- Paste into a LocalScript (StarterPlayerScripts or similar)
--- Uses the same sword-equip / :Activate() approach as your existing script.
+-- AutoEggs (client-side) -- draggable GUI + persistent-teleport-per-egg behavior
+-- Paste into a LocalScript (StarterPlayerScripts)
 
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
-local RunService = game:GetService("RunService")
 
--- Config
+-- CONFIG
 local CONFIG = {
-    SwordName = "Greatsword of Flying II", -- matches your backpack path
+    SwordName = "Greatsword of Flying II",
     TeleportOffset = Vector3.new(0, 4, 0),
-    ClickInterval = 0.12,
-    EggParentPath = {"Unbreakable", "Characters", "Undead"}, -- base path to eggs
+    ClickInterval = 0.12,   -- time between tool activations
+    EggParentPath = {"Unbreakable", "Characters", "Undead"},
     EggNames = {
         "Blue Egg",
         "Green Egg",
@@ -21,8 +20,10 @@ local CONFIG = {
         "Shiny Pink Egg",
         "Shiny Green Egg",
         "Golden Egg",
+        "Orange Egg", -- added
     },
     Debug = true,
+    PerEggTimeout = 30, -- safety: max seconds to spend on a single egg (adjust if you want)
 }
 
 local function dprint(...)
@@ -31,7 +32,7 @@ local function dprint(...)
     end
 end
 
--- Basic helpers (robustly find player character/humanoid/rootpart)
+-- Character helpers
 local function getCharacter()
     return player.Character or player.CharacterAdded:Wait()
 end
@@ -41,6 +42,12 @@ local function getRoot()
     return char and char:FindFirstChild("HumanoidRootPart")
 end
 
+local function getHumanoid()
+    local char = getCharacter()
+    return char and char:FindFirstChildOfClass("Humanoid")
+end
+
+-- Find eggs parent container
 local function findEggParent()
     local cur = workspace
     for _, name in ipairs(CONFIG.EggParentPath) do
@@ -50,23 +57,15 @@ local function findEggParent()
     return cur
 end
 
-local function findEggModelByName(name)
-    local parent = findEggParent()
-    if not parent then return nil end
-    return parent:FindFirstChild(name)
-end
-
+-- Get a useful target part from an egg model
 local function getTargetPartFromEggModel(model)
     if not model then return nil end
-    -- Prefer HumanoidRootPart
     if model:FindFirstChild("HumanoidRootPart") then
-        return model.HumanoidRootPart
+        return model:FindFirstChild("HumanoidRootPart")
     end
-    -- Some eggs may be a single part or have PrimaryPart
     if model.PrimaryPart and model.PrimaryPart:IsA("BasePart") then
         return model.PrimaryPart
     end
-    -- fallback to any BasePart
     for _, child in ipairs(model:GetChildren()) do
         if child:IsA("BasePart") then
             return child
@@ -75,133 +74,54 @@ local function getTargetPartFromEggModel(model)
     return nil
 end
 
--- Tool/equip helpers (copied/adjusted from your original approach)
+-- Tool helpers (find in Tools folder, character, or Backpack)
 local function findRealTool(toolName)
-    local character = getCharacter()
-    -- Tools folder (if used)
+    local char = player.Character
+    if char and char:FindFirstChild(toolName) and char:FindFirstChild(toolName):IsA("Tool") then
+        return char:FindFirstChild(toolName)
+    end
     local toolsFolder = player:FindFirstChild("Tools")
     if toolsFolder then
         local t = toolsFolder:FindFirstChild(toolName)
         if t and t:IsA("Tool") then return t end
     end
-    -- equipped tool on model
-    local equipped = character:FindFirstChild(toolName)
-    if equipped and equipped:IsA("Tool") then return equipped end
-    -- backpack
     local backpack = player:FindFirstChildOfClass("Backpack")
     if backpack then
-        local b = backpack:FindFirstChild(toolName)
-        if b and b:IsA("Tool") then return b end
+        local tb = backpack:FindFirstChild(toolName)
+        if tb and tb:IsA("Tool") then return tb end
     end
     return nil
-end
-
-local function getHumanoid()
-    local char = getCharacter()
-    return char and char:FindFirstChildOfClass("Humanoid")
 end
 
 local function equipToolByName(toolName)
     local humanoid = getHumanoid()
     if not humanoid then return nil end
     local tool = findRealTool(toolName)
-    if not tool then
-        return nil
-    end
+    if not tool then return nil end
     if tool.Parent ~= getCharacter() then
-        -- Equip from backpack
+        -- Equip from Backpack or Tools
         humanoid:EquipTool(tool)
         task.wait(0.12)
     end
-    -- return reference to the tool instance (now parented to character)
+    -- return tool instance (should now be parented to character)
     return getCharacter():FindFirstChild(toolName) or tool
 end
 
--- Teleport helper (client-side pivot)
+-- Teleport/pivot helper
 local function teleportToPosition(pos, lookAt)
     local char = getCharacter()
     if not char then return end
-    local root = getRoot()
+    local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return end
-    local cf
-    if lookAt then
-        cf = CFrame.new(pos, lookAt)
-    else
-        cf = CFrame.new(pos)
-    end
-    -- Use PivotTo to avoid velocity issues
+    local cf = lookAt and CFrame.new(pos, lookAt) or CFrame.new(pos)
     if char.PrimaryPart then
         char:PivotTo(cf)
     else
-        -- fallback: set HumanoidRootPart CFrame
         root.CFrame = cf
     end
 end
 
--- Main attack loop for a single egg model
-local function attackEggModel(eggModel)
-    if not eggModel then return end
-
-    local targetPart = getTargetPartFromEggModel(eggModel)
-    if not targetPart then
-        dprint("No target part for egg:", eggModel.Name)
-        return
-    end
-
-    -- Teleport near the egg
-    local targetPos = targetPart.Position + CONFIG.TeleportOffset
-    teleportToPosition(targetPos, targetPart.Position)
-    task.wait(0.06) -- small wait to ensure pivot finished
-
-    -- Try to get the egg's humanoid (some eggs may contain a Humanoid)
-    local eggHumanoid = eggModel:FindFirstChildOfClass("Humanoid")
-    -- Equip sword
-    local sword = equipToolByName(CONFIG.SwordName)
-    if not sword then
-        dprint("Could not find sword:", CONFIG.SwordName, "Make sure it's in Backpack or Tools.")
-        return
-    end
-
-    -- Rapidly activate sword until egg is gone or timeout/interrupt
-    local startTime = tick()
-    local timeout = 10 -- seconds max per egg to avoid infinite loops (adjust if needed)
-
-    while true do
-        -- If the egg model no longer exists, break
-        if not eggModel.Parent then
-            dprint("Egg removed (destroyed):", eggModel.Name)
-            break
-        end
-
-        -- If egg has humanoid, stop when health <= 0
-        if eggHumanoid then
-            if eggHumanoid.Health <= 0 then
-                dprint("Egg humanoid died:", eggModel.Name)
-                break
-            end
-        end
-
-        -- Activate the sword (client-side)
-        local ok, err = pcall(function()
-            if sword and sword:IsA("Tool") then
-                sword:Activate()
-            end
-        end)
-        if not ok then
-            dprint("Activate failed:", tostring(err))
-        end
-
-        -- Safety timeout
-        if tick() - startTime > timeout then
-            dprint("Timed out on egg:", eggModel.Name)
-            break
-        end
-
-        task.wait(CONFIG.ClickInterval)
-    end
-end
-
--- Iterate through configured egg list (returns next available model or nil)
+-- Get next egg model in the configured list (round-robin)
 local function getNextEggModel(currentIndex)
     local parent = findEggParent()
     if not parent then return nil, currentIndex end
@@ -215,7 +135,6 @@ local function getNextEggModel(currentIndex)
         if model then
             return model, nextIndex
         end
-        -- advance
         nextIndex = nextIndex + 1
         if nextIndex > n then nextIndex = 1 end
         tries = tries + 1
@@ -223,9 +142,62 @@ local function getNextEggModel(currentIndex)
     return nil, nextIndex
 end
 
--- Build a small GUI with a toggle button
+-- Attack a single egg model and persist teleporting until egg gone
+local function attackEggModelPersist(eggModel)
+    if not eggModel then return end
+
+    local targetPart = getTargetPartFromEggModel(eggModel)
+    if not targetPart then
+        dprint("No target part for egg:", eggModel:GetDebugId() or eggModel.Name)
+        return
+    end
+
+    -- Keep teleporting + activating until egg removed or humanoid dead or timeout
+    local startTime = tick()
+    while true do
+        -- stop if egg removed (no parent)
+        if not eggModel.Parent then
+            dprint("Egg removed:", eggModel.Name)
+            break
+        end
+
+        -- check humanoid (if present)
+        local eggHumanoid = eggModel:FindFirstChildOfClass("Humanoid")
+        if eggHumanoid and eggHumanoid.Health <= 0 then
+            dprint("Egg humanoid died:", eggModel.Name)
+            break
+        end
+
+        -- Teleport near the egg each iteration to ensure we stay in range
+        local pos = targetPart.Position + CONFIG.TeleportOffset
+        teleportToPosition(pos, targetPart.Position)
+
+        -- Equip & activate sword
+        local sword = equipToolByName(CONFIG.SwordName)
+        if sword and sword:IsA("Tool") then
+            -- Use pcall in case Activate errors
+            pcall(function()
+                sword:Activate()
+            end)
+        else
+            dprint("Sword not found while attacking egg:", CONFIG.SwordName)
+            -- if no sword, we still keep teleporting but break to avoid infinite loop
+            break
+        end
+
+        -- Timeout safety
+        if tick() - startTime > CONFIG.PerEggTimeout then
+            dprint("Per-egg timeout reached for:", eggModel.Name)
+            break
+        end
+
+        task.wait(CONFIG.ClickInterval)
+    end
+end
+
+-- GUI: create small draggable GUI
 local function createGui()
-    -- destroy existing gui if present
+    -- remove existing if present
     local existing = player:WaitForChild("PlayerGui"):FindFirstChild("AutoEggsGui")
     if existing then existing:Destroy() end
 
@@ -235,40 +207,87 @@ local function createGui()
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 220, 0, 80)
-    frame.Position = UDim2.new(0, 16, 0.6, -40)
+    frame.Name = "MainFrame"
+    frame.Size = UDim2.new(0, 240, 0, 92)
+    frame.Position = UDim2.new(0, 24, 0.6, -46)
     frame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
 
     local corner = Instance.new("UICorner")
-    corner.Parent = frame
     corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = frame
 
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -12, 0, 28)
+    title.Size = UDim2.new(1, -12, 0, 30)
     title.Position = UDim2.new(0, 6, 0, 6)
     title.BackgroundTransparency = 1
     title.Text = "Auto Egg Farmer"
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 18
-    title.TextColor3 = Color3.new(1, 1, 1)
+    title.TextColor3 = Color3.new(1,1,1)
     title.Parent = frame
 
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -12, 0, 40)
-    btn.Position = UDim2.new(0, 6, 0, 36)
-    btn.BackgroundColor3 = Color3.fromRGB(55, 120, 70)
-    btn.TextColor3 = Color3.new(1, 1, 1)
-    btn.Font = Enum.Font.SourceSansBold
-    btn.TextSize = 18
-    btn.Text = "Auto Eggs: OFF"
-    btn.Parent = frame
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(1, -12, 0, 44)
+    toggleBtn.Position = UDim2.new(0, 6, 0, 38)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(55, 120, 70)
+    toggleBtn.TextColor3 = Color3.new(1,1,1)
+    toggleBtn.Font = Enum.Font.SourceSansBold
+    toggleBtn.TextSize = 18
+    toggleBtn.Text = "Auto Eggs: OFF"
+    toggleBtn.Parent = frame
 
-    return screenGui, btn
+    -- Draggable: track input from frame
+    frame.Active = true -- important to receive input events for dragging
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+    local dragInput = nil
+
+    local function updateDrag(input)
+        if not dragging or not dragStart or not startPos then return end
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            dragInput = input
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    dragInput = nil
+                end
+            end)
+        end
+    end)
+
+    frame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput then
+            updateDrag(input)
+        end
+    end)
+
+    return screenGui, toggleBtn, frame
 end
 
--- Main toggle & runner
+-- Main runner
 local autoEggs = false
 local gui, toggleBtn = createGui()
 local currentEggIndex = 1
@@ -278,23 +297,27 @@ toggleBtn.MouseButton1Click:Connect(function()
     toggleBtn.Text = autoEggs and "Auto Eggs: ON" or "Auto Eggs: OFF"
 end)
 
--- Background task: auto-farm eggs when toggled on
+-- Background loop: pick an egg, persist on it until gone, then move to next.
 task.spawn(function()
     while true do
         if autoEggs then
+            -- Ensure character exists
+            if not player.Character then
+                player.CharacterAdded:Wait()
+            end
+
             local eggModel, idx = getNextEggModel(currentEggIndex)
             if eggModel then
+                -- Set next index for subsequent searches (round-robin)
                 currentEggIndex = idx + 1
                 if currentEggIndex > #CONFIG.EggNames then currentEggIndex = 1 end
-                -- Double-check character exists
-                if not player.Character then
-                    player.CharacterAdded:Wait()
-                end
-                attackEggModel(eggModel)
+
+                dprint("Starting persistent attack on egg:", eggModel.Name)
+                attackEggModelPersist(eggModel)
+                -- small pause before getting next egg
                 task.wait(0.08)
             else
-                -- No eggs found: wait longer then retry
-                dprint("No eggs found under path; waiting then retrying.")
+                dprint("No eggs found, retrying soon...")
                 task.wait(1.2)
             end
         else
