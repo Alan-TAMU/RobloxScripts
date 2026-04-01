@@ -1,4 +1,4 @@
--- AutoEggs (client-side) -- draggable GUI + persistent-teleport-per-egg behavior
+-- AutoEggs + AutoEaster (client-side) -- draggable GUI + persistent-per-target behavior
 -- Paste into a LocalScript (StarterPlayerScripts)
 
 local Players = game:GetService("Players")
@@ -20,15 +20,21 @@ local CONFIG = {
         "Shiny Pink Egg",
         "Shiny Green Egg",
         "Golden Egg",
-        "Orange Egg", -- added
+        "Orange Egg", -- existing
+    },
+    EasterNames = { -- NEW: list of Easter-character model names to search for across teams
+        "Bunny Warrior",
+        "Easter Guardian",
+        "Carrot Menace",
+        "Bunny",
     },
     Debug = true,
-    PerEggTimeout = 30, -- safety: max seconds to spend on a single egg (adjust if you want)
+    PerTargetTimeout = 30, -- seconds to spend on a single target before skipping (safety)
 }
 
 local function dprint(...)
     if CONFIG.Debug then
-        print("[AutoEggs]", ...)
+        print("[AutoFarm]", ...)
     end
 end
 
@@ -57,8 +63,8 @@ local function findEggParent()
     return cur
 end
 
--- Get a useful target part from an egg model
-local function getTargetPartFromEggModel(model)
+-- Get a useful target part from a model (eggs or NPCs)
+local function getTargetPartFromModel(model)
     if not model then return nil end
     if model:FindFirstChild("HumanoidRootPart") then
         return model:FindFirstChild("HumanoidRootPart")
@@ -142,52 +148,93 @@ local function getNextEggModel(currentIndex)
     return nil, nextIndex
 end
 
--- Attack a single egg model and persist teleporting until egg gone
-local function attackEggModelPersist(eggModel)
-    if not eggModel then return end
+-- Find next Easter-character model by scanning Characters -> (Orc, Human, Undead) for configured names
+local function getNextEasterModel(currentIndex)
+    -- list of teams to search under Characters
+    local charactersRoot = workspace:FindFirstChild("Unbreakable")
+    if not charactersRoot then return nil, currentIndex end
+    charactersRoot = charactersRoot:FindFirstChild("Characters")
+    if not charactersRoot then return nil, currentIndex end
 
-    local targetPart = getTargetPartFromEggModel(eggModel)
+    local teams = {"Orc", "Human", "Undead"} -- search these folders
+    local names = CONFIG.EasterNames
+    local n = #names
+    if n == 0 then return nil, currentIndex end
+
+    local nextIndex = (currentIndex or 1)
+    local tries = 0
+    while tries < n do
+        local name = names[nextIndex]
+        -- search each team for this model name or for a nested folder/model "Bunny" etc.
+        for _, teamName in ipairs(teams) do
+            local teamFolder = charactersRoot:FindFirstChild(teamName)
+            if teamFolder then
+                -- direct child with that name
+                local model = teamFolder:FindFirstChild(name)
+                if model then
+                    return model, nextIndex
+                end
+                -- also search within teamFolder for a folder named name that itself may contain a Humanoid (e.g., teamFolder.Bunny)
+                -- (teamFolder:FindFirstChild(name) already covers this if Bunny is present)
+                -- Additionally, search children of teamFolder for models whose name contains the name (case-insensitive partial)
+                for _, child in ipairs(teamFolder:GetChildren()) do
+                    if child:IsA("Model") and child.Name:lower():find(name:lower()) then
+                        return child, nextIndex
+                    end
+                end
+            end
+        end
+
+        -- advance index
+        nextIndex = nextIndex + 1
+        if nextIndex > n then nextIndex = 1 end
+        tries = tries + 1
+    end
+
+    return nil, nextIndex
+end
+
+-- Attack a single egg model and persist teleporting until egg gone (used for eggs)
+local function attackModelPersist(targetModel)
+    if not targetModel then return end
+
+    local targetPart = getTargetPartFromModel(targetModel)
     if not targetPart then
-        dprint("No target part for egg:", eggModel:GetDebugId() or eggModel.Name)
+        dprint("No target part for model:", tostring(targetModel.Name))
         return
     end
 
-    -- Keep teleporting + activating until egg removed or humanoid dead or timeout
+    -- Keep teleporting + activating until removed or humanoid dead or timeout
     local startTime = tick()
     while true do
-        -- stop if egg removed (no parent)
-        if not eggModel.Parent then
-            dprint("Egg removed:", eggModel.Name)
+        if not targetModel.Parent then
+            dprint("Target removed:", targetModel.Name)
             break
         end
 
-        -- check humanoid (if present)
-        local eggHumanoid = eggModel:FindFirstChildOfClass("Humanoid")
-        if eggHumanoid and eggHumanoid.Health <= 0 then
-            dprint("Egg humanoid died:", eggModel.Name)
+        local modelHumanoid = targetModel:FindFirstChildOfClass("Humanoid")
+        if modelHumanoid and modelHumanoid.Health <= 0 then
+            dprint("Target humanoid died:", targetModel.Name)
             break
         end
 
-        -- Teleport near the egg each iteration to ensure we stay in range
+        -- Teleport near the target each iteration to ensure we stay in range
         local pos = targetPart.Position + CONFIG.TeleportOffset
         teleportToPosition(pos, targetPart.Position)
 
         -- Equip & activate sword
         local sword = equipToolByName(CONFIG.SwordName)
         if sword and sword:IsA("Tool") then
-            -- Use pcall in case Activate errors
             pcall(function()
                 sword:Activate()
             end)
         else
-            dprint("Sword not found while attacking egg:", CONFIG.SwordName)
-            -- if no sword, we still keep teleporting but break to avoid infinite loop
+            dprint("Sword not found while attacking target:", CONFIG.SwordName)
             break
         end
 
-        -- Timeout safety
-        if tick() - startTime > CONFIG.PerEggTimeout then
-            dprint("Per-egg timeout reached for:", eggModel.Name)
+        if tick() - startTime > CONFIG.PerTargetTimeout then
+            dprint("Per-target timeout reached for:", targetModel.Name)
             break
         end
 
@@ -195,7 +242,7 @@ local function attackEggModelPersist(eggModel)
     end
 end
 
--- GUI: create small draggable GUI
+-- GUI: create small draggable GUI with two buttons (Eggs + Easter)
 local function createGui()
     -- remove existing if present
     local existing = player:WaitForChild("PlayerGui"):FindFirstChild("AutoEggsGui")
@@ -208,8 +255,8 @@ local function createGui()
 
     local frame = Instance.new("Frame")
     frame.Name = "MainFrame"
-    frame.Size = UDim2.new(0, 240, 0, 92)
-    frame.Position = UDim2.new(0, 24, 0.6, -46)
+    frame.Size = UDim2.new(0, 260, 0, 128)
+    frame.Position = UDim2.new(0, 24, 0.6, -64)
     frame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
@@ -222,21 +269,33 @@ local function createGui()
     title.Size = UDim2.new(1, -12, 0, 30)
     title.Position = UDim2.new(0, 6, 0, 6)
     title.BackgroundTransparency = 1
-    title.Text = "Auto Egg Farmer"
+    title.Text = "Auto Farm GUI"
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 18
     title.TextColor3 = Color3.new(1,1,1)
     title.Parent = frame
 
-    local toggleBtn = Instance.new("TextButton")
-    toggleBtn.Size = UDim2.new(1, -12, 0, 44)
-    toggleBtn.Position = UDim2.new(0, 6, 0, 38)
-    toggleBtn.BackgroundColor3 = Color3.fromRGB(55, 120, 70)
-    toggleBtn.TextColor3 = Color3.new(1,1,1)
-    toggleBtn.Font = Enum.Font.SourceSansBold
-    toggleBtn.TextSize = 18
-    toggleBtn.Text = "Auto Eggs: OFF"
-    toggleBtn.Parent = frame
+    -- Eggs button
+    local eggsBtn = Instance.new("TextButton")
+    eggsBtn.Size = UDim2.new(0.48, -10, 0, 44)
+    eggsBtn.Position = UDim2.new(0, 6, 0, 40)
+    eggsBtn.BackgroundColor3 = Color3.fromRGB(55, 120, 70)
+    eggsBtn.TextColor3 = Color3.new(1,1,1)
+    eggsBtn.Font = Enum.Font.SourceSansBold
+    eggsBtn.TextSize = 16
+    eggsBtn.Text = "Auto Eggs: OFF"
+    eggsBtn.Parent = frame
+
+    -- Easter button (NEW)
+    local easterBtn = Instance.new("TextButton")
+    easterBtn.Size = UDim2.new(0.48, -10, 0, 44)
+    easterBtn.Position = UDim2.new(0.52, 4, 0, 40)
+    easterBtn.BackgroundColor3 = Color3.fromRGB(200, 120, 40)
+    easterBtn.TextColor3 = Color3.new(1,1,1)
+    easterBtn.Font = Enum.Font.SourceSansBold
+    easterBtn.TextSize = 16
+    easterBtn.Text = "Auto Easter: OFF"
+    easterBtn.Parent = frame
 
     -- Draggable: track input from frame
     frame.Active = true -- important to receive input events for dragging
@@ -284,40 +343,66 @@ local function createGui()
         end
     end)
 
-    return screenGui, toggleBtn, frame
+    return screenGui, eggsBtn, easterBtn, frame
 end
 
 -- Main runner
 local autoEggs = false
-local gui, toggleBtn = createGui()
+local autoEaster = false
+local gui, eggsBtn, easterBtn = createGui()
 local currentEggIndex = 1
+local currentEasterIndex = 1
 
-toggleBtn.MouseButton1Click:Connect(function()
+eggsBtn.MouseButton1Click:Connect(function()
     autoEggs = not autoEggs
-    toggleBtn.Text = autoEggs and "Auto Eggs: ON" or "Auto Eggs: OFF"
+    eggsBtn.Text = autoEggs and "Auto Eggs: ON" or "Auto Eggs: OFF"
+end)
+
+easterBtn.MouseButton1Click:Connect(function()
+    autoEaster = not autoEaster
+    easterBtn.Text = autoEaster and "Auto Easter: ON" or "Auto Easter: OFF"
 end)
 
 -- Background loop: pick an egg, persist on it until gone, then move to next.
 task.spawn(function()
     while true do
         if autoEggs then
-            -- Ensure character exists
-            if not player.Character then
-                player.CharacterAdded:Wait()
-            end
+            if not player.Character then player.CharacterAdded:Wait() end
 
             local eggModel, idx = getNextEggModel(currentEggIndex)
             if eggModel then
-                -- Set next index for subsequent searches (round-robin)
                 currentEggIndex = idx + 1
                 if currentEggIndex > #CONFIG.EggNames then currentEggIndex = 1 end
 
                 dprint("Starting persistent attack on egg:", eggModel.Name)
-                attackEggModelPersist(eggModel)
-                -- small pause before getting next egg
+                attackModelPersist(eggModel)
                 task.wait(0.08)
             else
                 dprint("No eggs found, retrying soon...")
+                task.wait(1.2)
+            end
+        else
+            task.wait(0.12)
+        end
+    end
+end)
+
+-- Background loop: pick an Easter target, persist on it until gone, then move to next.
+task.spawn(function()
+    while true do
+        if autoEaster then
+            if not player.Character then player.CharacterAdded:Wait() end
+
+            local targetModel, idx = getNextEasterModel(currentEasterIndex)
+            if targetModel then
+                currentEasterIndex = idx + 1
+                if currentEasterIndex > #CONFIG.EasterNames then currentEasterIndex = 1 end
+
+                dprint("Starting persistent attack on Easter target:", targetModel.Name)
+                attackModelPersist(targetModel)
+                task.wait(0.08)
+            else
+                dprint("No Easter targets found, retrying soon...")
                 task.wait(1.2)
             end
         else
