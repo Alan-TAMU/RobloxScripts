@@ -1,8 +1,10 @@
 -- AutoFarm (team-aware) — immediate cancel on toggle + advance index only on actual removal/death
+-- Includes Anti-AFK toggle (client-side)
 -- Paste into a LocalScript (StarterPlayerScripts)
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
+local VirtualUser = game:GetService("VirtualUser")
 local player = Players.LocalPlayer
 
 -- CONFIG
@@ -30,6 +32,11 @@ local CONFIG = {
     TeleportIntervalMax = 2.0,
     ClickIntervalMin = 0.03,
     ClickIntervalMax = 2.0,
+
+    -- AntiAFK settings
+    AntiAFKBackupNudge = true,
+    AntiAFKNudgeAmount = 0.1, -- studs (very small)
+    AntiAFKNudgeInterval = 30, -- seconds between nudges (backup)
 }
 
 local function dprint(...)
@@ -271,6 +278,76 @@ local function attackModelPersist(targetModel, shouldContinue)
     end
 end
 
+-- ---------- Anti-AFK implementation ----------
+local autoAntiAFK = false
+local antiAFKConnection = nil
+local antiAFKBackupTask = nil
+
+local function enableAntiAFK()
+    if antiAFKConnection then return end
+    -- VirtualUser capture on Idled
+    antiAFKConnection = player.Idled:Connect(function()
+        -- Capture and click to fool AFK detection
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new(0,0))
+        end)
+        -- Also do a tiny nudge if configured (backup)
+        if CONFIG.AntiAFKBackupNudge then
+            local ok, err = pcall(function()
+                local char = player.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    local root = char.HumanoidRootPart
+                    local orig = root.CFrame
+                    root.CFrame = orig * CFrame.new(0, 0, CONFIG.AntiAFKNudgeAmount)
+                    task.wait(0.12)
+                    root.CFrame = orig
+                end
+            end)
+            if not ok then dprint("AntiAFK nudge failed:", err) end
+        end
+    end)
+
+    -- periodic backup nudges so long as enabled (helps if Idled not firing in some environments)
+    antiAFKBackupTask = task.spawn(function()
+        while autoAntiAFK do
+            task.wait(CONFIG.AntiAFKNudgeInterval)
+            if not autoAntiAFK then break end
+            pcall(function()
+                -- perform a minimal input via VirtualUser as well
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new(0,0))
+            end)
+            if CONFIG.AntiAFKBackupNudge then
+                pcall(function()
+                    local char = player.Character
+                    if char and char:FindFirstChild("HumanoidRootPart") then
+                        local root = char.HumanoidRootPart
+                        local orig = root.CFrame
+                        root.CFrame = orig * CFrame.new(0, 0, CONFIG.AntiAFKNudgeAmount)
+                        task.wait(0.12)
+                        root.CFrame = orig
+                    end
+                end)
+            end
+        end
+    end)
+
+    dprint("AntiAFK enabled")
+end
+
+local function disableAntiAFK()
+    if antiAFKConnection then
+        antiAFKConnection:Disconnect()
+        antiAFKConnection = nil
+    end
+    if antiAFKBackupTask then
+        -- this will exit when autoAntiAFK is false; set false and wait a tick
+        antiAFKBackupTask = nil
+    end
+    dprint("AntiAFK disabled")
+end
+
 -- ---------- GUI (Main + Settings) ----------
 local function createGui()
     local existing = player:WaitForChild("PlayerGui"):FindFirstChild("AutoEggsGui")
@@ -283,8 +360,8 @@ local function createGui()
 
     local frame = Instance.new("Frame")
     frame.Name = "MainFrame"
-    frame.Size = UDim2.new(0, 380, 0, 190)
-    frame.Position = UDim2.new(0, 24, 0.6, -95)
+    frame.Size = UDim2.new(0, 420, 0, 220)
+    frame.Position = UDim2.new(0, 24, 0.6, -110)
     frame.BackgroundColor3 = Color3.fromRGB(28,28,30)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
@@ -320,7 +397,7 @@ local function createGui()
     tabSettingsBtn.TextColor3 = Color3.new(1,1,1)
 
     local content = Instance.new("Frame", frame)
-    content.Size = UDim2.new(1, -12, 1, -76)
+    content.Size = UDim2.new(1, -12, 1, -92)
     content.Position = UDim2.new(0, 6, 0, 72)
     content.BackgroundTransparency = 1
 
@@ -349,6 +426,13 @@ local function createGui()
     combinedBtn.BackgroundColor3 = Color3.fromRGB(120,60,200)
     combinedBtn.Font = Enum.Font.SourceSansBold; combinedBtn.TextSize = 14
     combinedBtn.TextColor3 = Color3.new(1,1,1); combinedBtn.Text = "Auto Combined: OFF"
+
+    local antiAFKBtn = Instance.new("TextButton", mainPane)
+    antiAFKBtn.Size = UDim2.new(0, 110, 0, 40)
+    antiAFKBtn.Position = UDim2.new(0, 6, 0, 66)
+    antiAFKBtn.BackgroundColor3 = Color3.fromRGB(50,90,160)
+    antiAFKBtn.Font = Enum.Font.SourceSansBold; antiAFKBtn.TextSize = 14
+    antiAFKBtn.TextColor3 = Color3.new(1,1,1); antiAFKBtn.Text = "Anti-AFK: OFF"
 
     -- Settings pane
     local settingsPane = Instance.new("Frame", content)
@@ -459,12 +543,12 @@ local function createGui()
         UserInputService.InputChanged:Connect(function(input) if input == dragInput then updateDrag(input) end end)
     end
 
-    return screenGui, eggsBtn, easterBtn, combinedBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel
+    return screenGui, eggsBtn, easterBtn, combinedBtn, antiAFKBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel
 end
 
 -- ---------- main state ----------
+local gui, eggsBtn, easterBtn, combinedBtn, antiAFKBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel = createGui()
 local autoEggs, autoEaster, autoCombined = false, false, false
-local gui, eggsBtn, easterBtn, combinedBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel = createGui()
 local currentEggIndex, currentEasterIndex = 1, 1
 
 local function setModeStates(eggs, easter, combined)
@@ -484,6 +568,18 @@ easterBtn.MouseButton1Click:Connect(function()
 end)
 combinedBtn.MouseButton1Click:Connect(function()
     if not autoCombined then setModeStates(false,false,true) else setModeStates(false,false,false) end
+end)
+
+-- Anti-AFK toggle handling
+antiAFKBtn.MouseButton1Click:Connect(function()
+    autoAntiAFK = not autoAntiAFK
+    if autoAntiAFK then
+        antiAFKBtn.Text = "Anti-AFK: ON"
+        enableAntiAFK()
+    else
+        antiAFKBtn.Text = "Anti-AFK: OFF"
+        disableAntiAFK()
+    end
 end)
 
 -- Settings apply/reset
