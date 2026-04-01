@@ -121,6 +121,9 @@ local dragInput = nil
 local dragStart = nil
 local startPos = nil
 
+local attackWithSword
+local attackWithBow
+
 local EGG_NAMES = {
 	["Blue Egg"] = true,
 	["Green Egg"] = true,
@@ -407,6 +410,19 @@ local function getTargetPartFromModel(model)
 	end
 
 	return model:FindFirstChildWhichIsA("BasePart")
+end
+
+local function getUndeadEggTargetPart(model)
+	if not model then
+		return nil
+	end
+
+	local hrp = model:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		return hrp
+	end
+
+	return nil
 end
 
 local function getOrcTargetPart()
@@ -789,7 +805,7 @@ local function isValidUndeadEggModel(model)
 		return false
 	end
 
-	if not getTargetPartFromModel(model) then
+	if not getUndeadEggTargetPart(model) then
 		return false
 	end
 
@@ -875,7 +891,7 @@ end
 local function teleportToUndeadEgg(model)
 	local character = getCharacter()
 	local root = getRoot()
-	local targetPart = getTargetPartFromModel(model)
+	local targetPart = getUndeadEggTargetPart(model)
 
 	if not character or not root or not targetPart then
 		return
@@ -1343,7 +1359,7 @@ local function equipToolByName(toolName)
 	return tool
 end
 
-local function attackWithSword(targetHumanoid, targetLabel)
+attackWithSword = function(targetHumanoid, targetLabel)
 	if not targetHumanoid or targetHumanoid.Health <= 0 then
 		return
 	end
@@ -1358,7 +1374,7 @@ local function attackWithSword(targetHumanoid, targetLabel)
 	dprint("Activated sword on " .. targetLabel)
 end
 
-local function attackWithBow(targetHumanoid, targetLabel)
+attackWithBow = function(targetHumanoid, targetLabel)
 	if not targetHumanoid or targetHumanoid.Health <= 0 then
 		return
 	end
