@@ -247,6 +247,17 @@ local function getEggContainer()
 	return current
 end
 
+local function getEggContainer()
+	local current = workspace
+	for _, name in ipairs(CONFIG.EggContainerPath) do
+		current = current:FindFirstChild(name)
+		if not current then
+			return nil
+		end
+	end
+	return current
+end
+
 local function getPlayerTeamFolder()
 	local character = player.Character
 	if character and character.Parent then
@@ -757,6 +768,136 @@ local function teleportToNeutralNPC(model)
 	end
 
 	local targetPos = targetPart.Position + CONFIG.NeutralTeleportOffset
+	character:PivotTo(CFrame.new(targetPos, targetPart.Position))
+end
+
+local function isValidEggModel(model)
+	if not model or not model:IsA("Model") then
+		return false
+	end
+
+	if model.Name == player.Name then
+		return false
+	end
+
+	local validEggNames = {
+		["Blue Egg"] = true,
+		["Green Egg"] = true,
+		["Pink Egg"] = true,
+		["Yellow Egg"] = true,
+		["Shiny Red Egg"] = true,
+		["Shiny Pink Egg"] = true,
+		["Shiny Green Egg"] = true,
+		["Rainbow egg"] = true,
+		["Golden Egg"] = true,
+	}
+
+	if not validEggNames[model.Name] then
+		return false
+	end
+
+	local humanoid = model:FindFirstChild("Humanoid")
+	if not humanoid or not humanoid:IsA("Humanoid") then
+		return false
+	end
+
+	if humanoid.Health <= 0 then
+		return false
+	end
+
+	if not getTargetPartFromModel(model) then
+		return false
+	end
+
+	return true
+end
+
+local function rebuildEggList()
+	local container = getEggContainer()
+	if not container then
+		eggList = {}
+		currentEggIndex = 1
+		return
+	end
+
+	local newList = {}
+
+	for _, obj in ipairs(container:GetChildren()) do
+		if isValidEggModel(obj) then
+			table.insert(newList, obj)
+		end
+	end
+
+	table.sort(newList, function(a, b)
+		if a.Name == b.Name then
+			return a:GetDebugId() < b:GetDebugId()
+		end
+		return a.Name < b.Name
+	end)
+
+	eggList = newList
+
+	if #eggList == 0 then
+		currentEggIndex = 1
+	elseif currentEggIndex > #eggList then
+		currentEggIndex = 1
+	end
+end
+
+local function getNextEggModel()
+	if #eggList == 0 then
+		return nil
+	end
+
+	local checked = 0
+	while checked < #eggList do
+		local model = eggList[currentEggIndex]
+
+		if isValidEggModel(model) then
+			currentEggIndex += 1
+			if currentEggIndex > #eggList then
+				currentEggIndex = 1
+			end
+			return model
+		else
+			table.remove(eggList, currentEggIndex)
+			if currentEggIndex > #eggList and #eggList > 0 then
+				currentEggIndex = 1
+			end
+		end
+
+		checked += 1
+		if #eggList == 0 then
+			return nil
+		end
+	end
+
+	return nil
+end
+
+local function isCurrentEggTargetValid(model)
+	if not isValidEggModel(model) then
+		return false
+	end
+
+	local humanoid = model:FindFirstChild("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return false
+	end
+
+	return true
+end
+
+local function teleportToEgg(model)
+	local character = getCharacter()
+	local root = getRoot()
+	local targetPart = getTargetPartFromModel(model)
+
+	if not character or not root or not targetPart then
+		return
+	end
+
+	local targetPos = targetPart.Position + CONFIG.EggTeleportOffset
 	character:PivotTo(CFrame.new(targetPos, targetPart.Position))
 end
 
