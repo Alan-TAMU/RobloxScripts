@@ -39,6 +39,11 @@ local CONFIG = {
 	DemonDelay = 0.01,
 	AutoDemonOnStart = false,
 
+	EggContainerPath = {"Unbreakable", "Characters", "Undead"},
+	EggTeleportOffset = Vector3.new(0, 0, 3),
+	EggDelay = 0.01,
+	AutoEggOnStart = false,
+
 	AntiAfkOnStart = false,
 
 	SwordName = "Greatsword of Flying II",
@@ -53,6 +58,7 @@ local DEFAULTS = {
 	HumanDelay = CONFIG.HumanDelay,
 	NeutralDelay = CONFIG.NeutralDelay,
 	DemonDelay = CONFIG.DemonDelay,
+	EggDelay = CONFIG.EggDelay,
 	GeneralDelay = CONFIG.GeneralDelay,
 	SwordName = CONFIG.SwordName,
 	BowName = CONFIG.BowName,
@@ -72,6 +78,7 @@ local autoBowOrc = false
 local autoBowHuman = false
 local autoGeneral = false
 local autoDemon = CONFIG.AutoDemonOnStart
+local autoEgg = CONFIG.AutoEggOnStart
 local autoTeamTarget = false
 local autoTeamTargetCollect = false
 local antiAfk = CONFIG.AntiAfkOnStart
@@ -94,6 +101,10 @@ local currentOrcNPCTarget = nil
 local neutralNPCList = {}
 local currentNeutralNPCIndex = 1
 local currentNeutralNPCTarget = nil
+
+local eggList = {}
+local currentEggIndex = 1
+local currentEggTarget = nil
 
 local currentTeamNPCTarget = nil
 local currentTeamNPCTargetType = nil
@@ -217,6 +228,17 @@ end
 local function getDemonContainer()
 	local current = workspace
 	for _, name in ipairs(CONFIG.DemonContainerPath) do
+		current = current:FindFirstChild(name)
+		if not current then
+			return nil
+		end
+	end
+	return current
+end
+
+local function getEggContainer()
+	local current = workspace
+	for _, name in ipairs(CONFIG.EggContainerPath) do
 		current = current:FindFirstChild(name)
 		if not current then
 			return nil
@@ -735,6 +757,135 @@ local function teleportToNeutralNPC(model)
 	end
 
 	local targetPos = targetPart.Position + CONFIG.NeutralTeleportOffset
+	character:PivotTo(CFrame.new(targetPos, targetPart.Position))
+end
+
+local function isValidEggModel(model)
+	if not model or not model:IsA("Model") then
+		return false
+	end
+
+	if model.Name == player.Name then
+		return false
+	end
+
+	local validEggNames = {
+		["Blue Egg"] = true,
+		["Green Egg"] = true,
+		["Pink Egg"] = true,
+		["Yellow Egg"] = true,
+		["Shiny Red Egg"] = true,
+		["Shiny Pink Egg"] = true,
+		["Shiny Green Egg"] = true,
+		["Golden Egg"] = true,
+	}
+
+	if not validEggNames[model.Name] then
+		return false
+	end
+
+	local humanoid = model:FindFirstChild("Humanoid")
+	if not humanoid or not humanoid:IsA("Humanoid") then
+		return false
+	end
+
+	if humanoid.Health <= 0 then
+		return false
+	end
+
+	if not getTargetPartFromModel(model) then
+		return false
+	end
+
+	return true
+end
+
+local function rebuildEggList()
+	local container = getEggContainer()
+	if not container then
+		eggList = {}
+		currentEggIndex = 1
+		return
+	end
+
+	local newList = {}
+
+	for _, obj in ipairs(container:GetChildren()) do
+		if isValidEggModel(obj) then
+			table.insert(newList, obj)
+		end
+	end
+
+	table.sort(newList, function(a, b)
+		if a.Name == b.Name then
+			return a:GetDebugId() < b:GetDebugId()
+		end
+		return a.Name < b.Name
+	end)
+
+	eggList = newList
+
+	if #eggList == 0 then
+		currentEggIndex = 1
+	elseif currentEggIndex > #eggList then
+		currentEggIndex = 1
+	end
+end
+
+local function getNextEggModel()
+	if #eggList == 0 then
+		return nil
+	end
+
+	local checked = 0
+	while checked < #eggList do
+		local model = eggList[currentEggIndex]
+
+		if isValidEggModel(model) then
+			currentEggIndex += 1
+			if currentEggIndex > #eggList then
+				currentEggIndex = 1
+			end
+			return model
+		else
+			table.remove(eggList, currentEggIndex)
+			if currentEggIndex > #eggList and #eggList > 0 then
+				currentEggIndex = 1
+			end
+		end
+
+		checked += 1
+		if #eggList == 0 then
+			return nil
+		end
+	end
+
+	return nil
+end
+
+local function isCurrentEggTargetValid(model)
+	if not isValidEggModel(model) then
+		return false
+	end
+
+	local humanoid = model:FindFirstChild("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return false
+	end
+
+	return true
+end
+
+local function teleportToEgg(model)
+	local character = getCharacter()
+	local root = getRoot()
+	local targetPart = getTargetPartFromModel(model)
+
+	if not character or not root or not targetPart then
+		return
+	end
+
+	local targetPos = targetPart.Position + CONFIG.EggTeleportOffset
 	character:PivotTo(CFrame.new(targetPos, targetPart.Position))
 end
 
@@ -1257,6 +1408,7 @@ local function captureConfigTable()
 			autoBowHuman = autoBowHuman,
 			autoGeneral = autoGeneral,
 			autoDemon = autoDemon,
+			autoEgg = autoEgg,
 			autoTeamTarget = autoTeamTarget,
 			autoTeamTargetCollect = autoTeamTargetCollect,
 			antiAfk = antiAfk,
@@ -1267,6 +1419,7 @@ local function captureConfigTable()
 			HumanDelay = CONFIG.HumanDelay,
 			NeutralDelay = CONFIG.NeutralDelay,
 			DemonDelay = CONFIG.DemonDelay,
+			EggDelay = CONFIG.EggDelay,
 			GeneralDelay = CONFIG.GeneralDelay,
 			SwordName = CONFIG.SwordName,
 			BowName = CONFIG.BowName,
@@ -1295,6 +1448,7 @@ local function applyConfigTable(data)
 		if type(toggles.autoBowHuman) == "boolean" then autoBowHuman = toggles.autoBowHuman end
 		if type(toggles.autoGeneral) == "boolean" then autoGeneral = toggles.autoGeneral end
 		if type(toggles.autoDemon) == "boolean" then autoDemon = toggles.autoDemon end
+		if type(toggles.autoEgg) == "boolean" then autoEgg = toggles.autoEgg end
 		if type(toggles.autoTeamTarget) == "boolean" then autoTeamTarget = toggles.autoTeamTarget end
 		if type(toggles.autoTeamTargetCollect) == "boolean" then autoTeamTargetCollect = toggles.autoTeamTargetCollect end
 		if type(toggles.antiAfk) == "boolean" then antiAfk = toggles.antiAfk end
@@ -1307,6 +1461,7 @@ local function applyConfigTable(data)
 		if type(inputs.HumanDelay) == "number" and inputs.HumanDelay > 0 then CONFIG.HumanDelay = inputs.HumanDelay end
 		if type(inputs.NeutralDelay) == "number" and inputs.NeutralDelay > 0 then CONFIG.NeutralDelay = inputs.NeutralDelay end
 		if type(inputs.DemonDelay) == "number" and inputs.DemonDelay > 0 then CONFIG.DemonDelay = inputs.DemonDelay end
+		if type(inputs.EggDelay) == "number" and inputs.EggDelay > 0 then CONFIG.EggDelay = inputs.EggDelay end
 		if type(inputs.GeneralDelay) == "number" and inputs.GeneralDelay > 0 then CONFIG.GeneralDelay = inputs.GeneralDelay end
 
 		if type(inputs.SwordName) == "string" and trimString(inputs.SwordName) ~= "" then
@@ -1340,6 +1495,10 @@ local function applyConfigTable(data)
 	neutralNPCList = {}
 	currentNeutralNPCIndex = 1
 	currentNeutralNPCTarget = nil
+
+	eggList = {}
+	currentEggIndex = 1
+	currentEggTarget = nil
 
 	currentTeamNPCTarget = nil
 	currentTeamNPCTargetType = nil
@@ -1461,6 +1620,7 @@ local function resetCurrentConfig()
 	autoBowHuman = false
 	autoGeneral = false
 	autoDemon = CONFIG.AutoDemonOnStart
+	autoEgg = CONFIG.AutoEggOnStart
 	autoTeamTarget = false
 	autoTeamTargetCollect = false
 	antiAfk = CONFIG.AntiAfkOnStart
@@ -1471,6 +1631,7 @@ local function resetCurrentConfig()
 	CONFIG.HumanDelay = DEFAULTS.HumanDelay
 	CONFIG.NeutralDelay = DEFAULTS.NeutralDelay
 	CONFIG.DemonDelay = DEFAULTS.DemonDelay
+	CONFIG.EggDelay = DEFAULTS.EggDelay
 	CONFIG.GeneralDelay = DEFAULTS.GeneralDelay
 	CONFIG.SwordName = DEFAULTS.SwordName
 	CONFIG.BowName = DEFAULTS.BowName
@@ -1489,6 +1650,10 @@ local function resetCurrentConfig()
 	neutralNPCList = {}
 	currentNeutralNPCIndex = 1
 	currentNeutralNPCTarget = nil
+
+	eggList = {}
+	currentEggIndex = 1
+	currentEggTarget = nil
 
 	currentTeamNPCTarget = nil
 	currentTeamNPCTargetType = nil
@@ -1713,6 +1878,7 @@ local bowOrcButton = createActionButton(mainContentFrame)
 local bowHumanButton = createActionButton(mainContentFrame)
 local generalButton = createActionButton(mainContentFrame)
 local demonButton = createActionButton(mainContentFrame)
+local eggButton = createActionButton(mainContentFrame)
 local antiAfkButton = createActionButton(mainContentFrame)
 local teamTargetButton = createActionButton(mainContentFrame)
 local teamTargetCollectButton = createActionButton(mainContentFrame)
@@ -1724,6 +1890,7 @@ local orcDelayRow, orcDelayLabel, orcDelayBox = createLabeledBoxRow(settingsCont
 local humanDelayRow, humanDelayLabel, humanDelayBox = createLabeledBoxRow(settingsContentFrame, "Human Delay", CONFIG.HumanDelay)
 local neutralDelayRow, neutralDelayLabel, neutralDelayBox = createLabeledBoxRow(settingsContentFrame, "Neutral Delay", CONFIG.NeutralDelay)
 local demonDelayRow, demonDelayLabel, demonDelayBox = createLabeledBoxRow(settingsContentFrame, "Demon Delay", CONFIG.DemonDelay)
+local eggDelayRow, eggDelayLabel, eggDelayBox = createLabeledBoxRow(settingsContentFrame, "Egg Delay", CONFIG.EggDelay)
 local generalDelayRow, generalDelayLabel, generalDelayBox = createLabeledBoxRow(settingsContentFrame, "General Delay", CONFIG.GeneralDelay)
 
 local weaponHeader = createFullWidthLabel(settingsContentFrame, "Weapon Inputs (press Enter)", 24, Enum.Font.SourceSansBold, 18)
@@ -1761,6 +1928,7 @@ local function syncInputBoxesFromConfig()
 	humanDelayBox.Text = tostring(CONFIG.HumanDelay)
 	neutralDelayBox.Text = tostring(CONFIG.NeutralDelay)
 	demonDelayBox.Text = tostring(CONFIG.DemonDelay)
+	eggDelayBox.Text = tostring(CONFIG.EggDelay)
 	generalDelayBox.Text = tostring(CONFIG.GeneralDelay)
 	swordNameBox.Text = CONFIG.SwordName
 	bowNameBox.Text = CONFIG.BowName
@@ -1873,6 +2041,9 @@ local function updateGui()
 	demonButton.Text = autoDemon and "Auto Demon: ON" or "Auto Demon: OFF"
 	demonButton.BackgroundColor3 = autoDemon and Color3.fromRGB(50, 140, 70) or Color3.fromRGB(65, 65, 75)
 
+	eggButton.Text = autoEgg and "Auto Eggs: ON" or "Auto Eggs: OFF"
+	eggButton.BackgroundColor3 = autoEgg and Color3.fromRGB(50, 140, 70) or Color3.fromRGB(65, 65, 75)
+
 	antiAfkButton.Text = antiAfk and "Anti-AFK: ON" or "Anti-AFK: OFF"
 	antiAfkButton.BackgroundColor3 = antiAfk and Color3.fromRGB(50, 140, 70) or Color3.fromRGB(65, 65, 75)
 
@@ -1969,6 +2140,7 @@ local function updateGui()
 	if autoBowOrc then table.insert(active, "Bow Orc") end
 	if autoBowHuman then table.insert(active, "Bow Human") end
 	if autoDemon then table.insert(active, "Demon") end
+	if autoEgg then table.insert(active, "Eggs") end
 	if antiAfk then table.insert(active, "Anti-AFK") end
 
 	if autoGeneral then
@@ -2101,6 +2273,17 @@ demonButton.MouseButton1Click:Connect(function()
 	updateGui()
 end)
 
+eggButton.MouseButton1Click:Connect(function()
+	autoEgg = not autoEgg
+	if not autoEgg then
+		currentEggTarget = nil
+	else
+		rebuildEggList()
+	end
+	autoSaveCurrentProfile()
+	updateGui()
+end)
+
 antiAfkButton.MouseButton1Click:Connect(function()
 	antiAfk = not antiAfk
 
@@ -2217,6 +2400,7 @@ bindDelayBox(orcDelayBox, "OrcDelay")
 bindDelayBox(humanDelayBox, "HumanDelay")
 bindDelayBox(neutralDelayBox, "NeutralDelay")
 bindDelayBox(demonDelayBox, "DemonDelay")
+bindDelayBox(eggDelayBox, "EggDelay")
 bindDelayBox(generalDelayBox, "GeneralDelay")
 
 bindTextBox(swordNameBox, "SwordName")
@@ -2233,6 +2417,7 @@ rebuildGemList()
 rebuildHumanNPCList()
 rebuildOrcNPCList()
 rebuildNeutralNPCList()
+rebuildEggList()
 
 task.spawn(function()
 	while true do
@@ -2426,6 +2611,30 @@ task.spawn(function()
 			attackWithSword(getDemonHumanoid(), "Giant Demon Spawn")
 			task.wait(CONFIG.DemonDelay)
 		else
+			task.wait(0.1)
+		end
+	end
+end)
+
+task.spawn(function()
+	while true do
+		if autoEgg then
+			if not isCurrentEggTargetValid(currentEggTarget) then
+				rebuildEggList()
+				currentEggTarget = getNextEggModel()
+			end
+
+			if currentEggTarget and isCurrentEggTargetValid(currentEggTarget) then
+				local humanoid = currentEggTarget:FindFirstChild("Humanoid")
+				teleportToEgg(currentEggTarget)
+				attackWithSword(humanoid, currentEggTarget.Name)
+			else
+				currentEggTarget = nil
+			end
+
+			task.wait(CONFIG.EggDelay)
+		else
+			currentEggTarget = nil
 			task.wait(0.1)
 		end
 	end
