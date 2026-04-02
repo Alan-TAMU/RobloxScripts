@@ -34,7 +34,9 @@ local CONFIG = {
 	NeutralDelay = 0.01,
 
 	DemonContainerPath = {"Unbreakable", "Characters", "Demon"},
-	DemonName = "Giant Demon Spawn",
+	DemonModelPath = {"Unbreakable", "Characters", "Demon", "TestDemon"},
+	DemonHumanoidPath = {"Unbreakable", "Characters", "Demon", "TestDemon", "Humanoid"},
+	DemonLabel = "TestDemon",
 	DemonTeleportOffset = Vector3.new(0, 0, 3),
 	DemonDelay = 0.01,
 	AutoDemonOnStart = false,
@@ -225,6 +227,23 @@ local function getDemonContainer()
 	return current
 end
 
+local function getInstanceFromPath(pathParts, startNode)
+	local current = startNode or workspace
+
+	for _, name in ipairs(pathParts) do
+		if not current then
+			return nil
+		end
+
+		current = current:FindFirstChild(name)
+		if not current then
+			return nil
+		end
+	end
+
+	return current
+end
+
 local function getPlayerTeamFolder()
 	local character = player.Character
 	if character and character.Parent then
@@ -297,14 +316,14 @@ local function getHumanModel()
 end
 
 local function getDemonModel()
-	local container = getDemonContainer()
-	if not container then
-		return nil
-	end
-
-	local demon = container:FindFirstChild(CONFIG.DemonName)
+	local demon = getInstanceFromPath(CONFIG.DemonModelPath)
 	if demon and demon:IsA("Model") then
 		return demon
+	end
+
+	local humanoid = getInstanceFromPath(CONFIG.DemonHumanoidPath)
+	if humanoid and humanoid:IsA("Humanoid") and humanoid.Parent and humanoid.Parent:IsA("Model") then
+		return humanoid.Parent
 	end
 
 	return nil
@@ -339,14 +358,19 @@ local function getHumanHumanoid()
 end
 
 local function getDemonHumanoid()
+	local humanoid = getInstanceFromPath(CONFIG.DemonHumanoidPath)
+	if humanoid and humanoid:IsA("Humanoid") then
+		return humanoid
+	end
+
 	local demon = getDemonModel()
 	if not demon then
 		return nil
 	end
 
-	local humanoid = demon:FindFirstChild("Humanoid")
-	if humanoid and humanoid:IsA("Humanoid") then
-		return humanoid
+	local fallbackHumanoid = demon:FindFirstChild("Humanoid")
+	if fallbackHumanoid and fallbackHumanoid:IsA("Humanoid") then
+		return fallbackHumanoid
 	end
 
 	return nil
@@ -909,7 +933,7 @@ local function getTeamTargetInfo()
 		}
 	elseif teamFolder == "Neutral" then
 		return {
-			label = "Giant Demon Spawn",
+			label = CONFIG.DemonLabel,
 			targetPart = getDemonTargetPart(),
 			targetHumanoid = getDemonHumanoid(),
 			offset = CONFIG.DemonTeleportOffset,
@@ -2423,7 +2447,7 @@ task.spawn(function()
 	while true do
 		if autoDemon then
 			teleportToDemon()
-			attackWithSword(getDemonHumanoid(), "Giant Demon Spawn")
+			attackWithSword(getDemonHumanoid(), CONFIG.DemonLabel)
 			task.wait(CONFIG.DemonDelay)
 		else
 			task.wait(0.1)
@@ -2468,13 +2492,13 @@ task.spawn(function()
 					teamTargetCollectTriggered = false
 
 					teleportToDemon()
-					attackWithSword(demonHumanoid, "Giant Demon Spawn")
+					attackWithSword(demonHumanoid, CONFIG.DemonLabel)
 					task.wait(CONFIG.DemonDelay)
 				else
 					if teamTargetCollectSawDemon and not teamTargetCollectTriggered then
 						timedCollectEndTime = math.max(timedCollectEndTime, time() + 180)
 						teamTargetCollectTriggered = true
-						dprint("Giant Demon Spawn defeated, starting Auto Collect for 180 seconds")
+						dprint(CONFIG.DemonLabel .. " defeated, starting Auto Collect for 180 seconds")
 					end
 
 					task.wait(0.1)
