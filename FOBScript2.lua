@@ -1,5 +1,5 @@
 -- AutoFarm (team-aware) — immediate cancel on toggle + advance index only on actual removal/death
--- Includes Anti-AFK toggle (client-side) + Auto TestDemon button
+-- Includes Anti-AFK toggle (client-side) + Auto TestDemon button + minimizable GUI
 -- Paste into a LocalScript (StarterPlayerScripts)
 
 local Players = game:GetService("Players")
@@ -297,13 +297,16 @@ local antiAFKBackupTask = nil
 
 local function enableAntiAFK()
     if antiAFKConnection then return end
+    -- VirtualUser capture on Idled
     antiAFKConnection = player.Idled:Connect(function()
+        -- Capture and click to fool AFK detection
         pcall(function()
             VirtualUser:CaptureController()
             VirtualUser:ClickButton2(Vector2.new(0,0))
         end)
+        -- Also do a tiny nudge if configured (backup)
         if CONFIG.AntiAFKBackupNudge then
-            pcall(function()
+            local ok, err = pcall(function()
                 local char = player.Character
                 if char and char:FindFirstChild("HumanoidRootPart") then
                     local root = char.HumanoidRootPart
@@ -313,14 +316,17 @@ local function enableAntiAFK()
                     root.CFrame = orig
                 end
             end)
+            if not ok then dprint("AntiAFK nudge failed:", err) end
         end
     end)
 
+    -- periodic backup nudges so long as enabled (helps if Idled not firing in some environments)
     antiAFKBackupTask = task.spawn(function()
         while autoAntiAFK do
             task.wait(CONFIG.AntiAFKNudgeInterval)
             if not autoAntiAFK then break end
             pcall(function()
+                -- perform a minimal input via VirtualUser as well
                 VirtualUser:CaptureController()
                 VirtualUser:ClickButton2(Vector2.new(0,0))
             end)
@@ -351,7 +357,7 @@ local function disableAntiAFK()
     dprint("AntiAFK disabled")
 end
 
--- ---------- GUI (Main + Settings) ----------
+-- ---------- GUI (Main + Settings) with minimizable capability ----------
 local function createGui()
     local existing = player:WaitForChild("PlayerGui"):FindFirstChild("AutoEggsGui")
     if existing then existing:Destroy() end
@@ -372,13 +378,27 @@ local function createGui()
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
 
     local title = Instance.new("TextLabel", frame)
-    title.Size = UDim2.new(1, -12, 0, 28)
+    title.Size = UDim2.new(1, -36, 0, 28) -- leave room for minimize button on the right
     title.Position = UDim2.new(0, 6, 0, 6)
     title.BackgroundTransparency = 1
     title.Text = "Auto Farm GUI"
     title.Font = Enum.Font.SourceSansBold
     title.TextSize = 18
     title.TextColor3 = Color3.new(1,1,1)
+    title.TextXAlignment = Enum.TextXAlignment.Left
+
+    local minimizeBtn = Instance.new("TextButton", frame)
+    minimizeBtn.Name = "MinimizeBtn"
+    minimizeBtn.Size = UDim2.new(0, 24, 0, 24)
+    minimizeBtn.Position = UDim2.new(1, -30, 0, 6)
+    minimizeBtn.BackgroundColor3 = Color3.fromRGB(50,50,52)
+    minimizeBtn.BorderSizePixel = 0
+    minimizeBtn.Font = Enum.Font.SourceSansBold
+    minimizeBtn.TextSize = 18
+    minimizeBtn.TextColor3 = Color3.new(1,1,1)
+    minimizeBtn.Text = "—" -- minimize icon
+    minimizeBtn.AutoButtonColor = true
+    Instance.new("UICorner", minimizeBtn).CornerRadius = UDim.new(0,6)
 
     -- Tabs
     local tabMainBtn = Instance.new("TextButton", frame)
@@ -527,14 +547,15 @@ local function createGui()
     tabMainBtn.MouseButton1Click:Connect(showMain)
     tabSettingsBtn.MouseButton1Click:Connect(showSettings)
 
-    -- draggable
+    -- draggable (works when minimized too)
     frame.Active = true
     do
         local dragging, dragStart, startPos, dragInput = false, nil, nil, nil
         local function updateDrag(input)
             if not dragging or not dragStart or not startPos then return end
             local delta = input.Position - dragStart
-            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            local newPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            frame.Position = newPos
         end
         frame.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -553,11 +574,51 @@ local function createGui()
         UserInputService.InputChanged:Connect(function(input) if input == dragInput then updateDrag(input) end end)
     end
 
-    return screenGui, eggsBtn, easterBtn, combinedBtn, antiAFKBtn, testDemonBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel
+    -- minimizable state
+    local isMinimized = false
+    local prevSize = frame.Size
+    local prevPos = frame.Position
+
+    local function minimize()
+        if isMinimized then return end
+        isMinimized = true
+        prevSize = frame.Size
+        prevPos = frame.Position
+        -- collapse to small bar, hide content
+        frame.Size = UDim2.new(0, 220, 0, 36)
+        frame.Position = UDim2.new(prevPos.X.Scale, prevPos.X.Offset, prevPos.Y.Scale, prevPos.Y.Offset) -- keep top-left
+        mainPane.Visible = false
+        settingsPane.Visible = false
+        tabMainBtn.Visible = false
+        tabSettingsBtn.Visible = false
+        -- shrink title to full width
+        title.Size = UDim2.new(1, -36, 0, 28)
+        minimizeBtn.Text = "▢" -- restore icon
+    end
+
+    local function restore()
+        if not isMinimized then return end
+        isMinimized = false
+        frame.Size = prevSize
+        frame.Position = prevPos
+        tabMainBtn.Visible = true
+        tabSettingsBtn.Visible = true
+        -- restore to main pane by default
+        mainPane.Visible = true
+        settingsPane.Visible = false
+        minimizeBtn.Text = "—"
+    end
+
+    minimizeBtn.MouseButton1Click:Connect(function()
+        if isMinimized then restore() else minimize() end
+    end)
+
+    -- expose some elements for the rest of the script
+    return screenGui, frame, eggsBtn, easterBtn, combinedBtn, antiAFKBtn, testDemonBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel
 end
 
 -- ---------- main state ----------
-local gui, eggsBtn, easterBtn, combinedBtn, antiAFKBtn, testDemonBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel = createGui()
+local gui, frame, eggsBtn, easterBtn, combinedBtn, antiAFKBtn, testDemonBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel = createGui()
 local autoEggs, autoEaster, autoCombined, autoTestDemon = false, false, false, false
 local autoAntiAFK = false
 local currentEggIndex, currentEasterIndex = 1, 1
