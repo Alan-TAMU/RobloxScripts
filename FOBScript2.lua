@@ -1,6 +1,5 @@
--- AutoFarm (team-aware) — reliable minimizable GUI + M shortcut
--- Paste into a LocalScript (StarterPlayerScripts)
-
+-- Full AutoFarm LocalScript (uses local player name automatically)
+-- Paste into StarterPlayerScripts (client-side)
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
@@ -8,7 +7,6 @@ local player = Players.LocalPlayer
 
 -- CONFIG
 local CONFIG = {
-    PlayerName = "NamiPlaysAM",
     SwordName = "Greatsword of Flying II",
     TeleportOffset = Vector3.new(0, 4, 0),
 
@@ -21,21 +19,21 @@ local CONFIG = {
         "Shiny Red Egg","Shiny Pink Egg","Shiny Green Egg",
         "Golden Egg","Orange Egg",
     },
+
     EasterNames = {
         "Bunny Warrior","Easter Guardian","Carrot Menace","Bunny",
     },
 
-    Debug = true,
+    Debug = false,
     PerTargetTimeout = 30,
     TeleportIntervalMin = 0.03,
     TeleportIntervalMax = 2.0,
     ClickIntervalMin = 0.03,
     ClickIntervalMax = 2.0,
 
-    -- AntiAFK settings
     AntiAFKBackupNudge = true,
-    AntiAFKNudgeAmount = 0.1, -- studs (very small)
-    AntiAFKNudgeInterval = 30, -- seconds between nudges (backup)
+    AntiAFKNudgeAmount = 0.1,
+    AntiAFKNudgeInterval = 30,
 }
 
 local function dprint(...)
@@ -50,7 +48,7 @@ local ENEMIES = {
     Undead= {"Human", "Orc"},
 }
 
--- ---------- basic helpers ----------
+-- Basic helpers
 local function getCharacter()
     return player.Character or player.CharacterAdded:Wait()
 end
@@ -71,15 +69,11 @@ local function teleportToPosition(pos, lookAt)
     end
 end
 
--- ---------- tool helpers ----------
+-- Tool helpers
 local function findRealTool(toolName)
     local char = player.Character
-    if char and char:FindFirstChild(toolName) and char:FindFirstChild(toolName):IsA("Tool") then
-        return char:FindFirstChild(toolName)
-    end
-    local toolsFolder = player:FindFirstChild("Tools")
-    if toolsFolder then
-        local t = toolsFolder:FindFirstChild(toolName)
+    if char then
+        local t = char:FindFirstChild(toolName)
         if t and t:IsA("Tool") then return t end
     end
     local backpack = player:FindFirstChildOfClass("Backpack")
@@ -102,7 +96,7 @@ local function equipToolByName(toolName)
     return getCharacter():FindFirstChild(toolName) or tool
 end
 
--- ---------- model / target helpers ----------
+-- Model / target helpers
 local function findEggParent()
     local cur = workspace
     for _, name in ipairs(CONFIG.EggParentPath) do
@@ -122,7 +116,7 @@ local function getTargetPartFromModel(model)
     return nil
 end
 
--- ---------- round-robin getters ----------
+-- Round-robin getters
 local function getNextEggModel(currentIndex)
     local parent = findEggParent()
     if not parent then return nil, currentIndex end
@@ -141,7 +135,7 @@ local function getNextEggModel(currentIndex)
     return nil, nextIndex
 end
 
--- detect player's team
+-- Detect player team (searches Characters folder for player.Name)
 local function detectPlayerTeam()
     local un = workspace:FindFirstChild("Unbreakable")
     if not un then return nil end
@@ -150,7 +144,7 @@ local function detectPlayerTeam()
     local teams = {"Human","Orc","Undead"}
     for _, team in ipairs(teams) do
         local folder = chars:FindFirstChild(team)
-        if folder and folder:FindFirstChild(CONFIG.PlayerName) then
+        if folder and folder:FindFirstChild(player.Name) then
             return team
         end
     end
@@ -169,7 +163,7 @@ local function detectPlayerTeam()
     return nil
 end
 
--- TEAM-AWARE Easter search
+-- Easter getter (team-aware, avoid attacking allies) — uses player.Name to skip allies
 local function getNextEasterModel(currentIndex)
     local un = workspace:FindFirstChild("Unbreakable")
     if not un then return nil, currentIndex end
@@ -180,8 +174,6 @@ local function getNextEasterModel(currentIndex)
     local teamsToSearch = {"Orc","Human","Undead"}
     if playerTeam and ENEMIES[playerTeam] then
         teamsToSearch = ENEMIES[playerTeam]
-    else
-        dprint("Player team not detected; searching all teams")
     end
 
     local names = CONFIG.EasterNames
@@ -195,11 +187,11 @@ local function getNextEasterModel(currentIndex)
             local teamFolder = chars:FindFirstChild(teamName)
             if teamFolder then
                 local model = teamFolder:FindFirstChild(name)
-                if model and model.Name ~= CONFIG.PlayerName then
+                if model and model.Name ~= player.Name then
                     return model, nextIndex
                 end
                 for _, child in ipairs(teamFolder:GetChildren()) do
-                    if child:IsA("Model") and child.Name:lower():find(name:lower()) and child.Name ~= CONFIG.PlayerName then
+                    if child:IsA("Model") and child.Name:lower():find(name:lower()) and child.Name ~= player.Name then
                         return child, nextIndex
                     end
                 end
@@ -213,7 +205,7 @@ local function getNextEasterModel(currentIndex)
     return nil, nextIndex
 end
 
--- ---------- TestDemon finder ----------
+-- TestDemon finder
 local function getTestDemonModel()
     local un = workspace:FindFirstChild("Unbreakable")
     if not un then return nil end
@@ -225,27 +217,22 @@ local function getTestDemonModel()
     return model
 end
 
--- ---------- core attack routine ----------
--- signature: attackModelPersist(targetModel, shouldContinue)
--- shouldContinue is a function returning true when we should keep attacking (used to cancel mid-target)
--- returns one of: "removed", "dead", "timeout", "cancelled", "tool_missing"
+-- Core attack routine
 local function attackModelPersist(targetModel, shouldContinue)
-    if not targetModel then return "removed" end -- nothing to do
+    if not targetModel then return "removed" end
     local targetPart = getTargetPartFromModel(targetModel)
     if not targetPart then
-        dprint("No target part for:", tostring(targetModel.Name))
+        dprint("No target part for:", tostring(targetModel and targetModel.Name))
         return "removed"
     end
 
     local startTime = tick()
     while true do
-        -- immediate cancellation check
         if shouldContinue and not shouldContinue() then
             dprint("Attack cancelled by toggle for:", targetModel.Name)
             return "cancelled"
         end
 
-        -- stop conditions
         if not targetModel.Parent then
             dprint("Target removed:", targetModel.Name)
             return "removed"
@@ -257,7 +244,8 @@ local function attackModelPersist(targetModel, shouldContinue)
         end
 
         -- teleport near the target
-        teleportToPosition(targetPart.Position + CONFIG.TeleportOffset, targetPart.Position)
+        local pos = targetPart.Position + CONFIG.TeleportOffset
+        teleportToPosition(pos, targetPart.Position)
 
         -- equip and activate sword repeatedly for the configured teleport interval
         local sword = equipToolByName(CONFIG.SwordName)
@@ -289,23 +277,20 @@ local function attackModelPersist(targetModel, shouldContinue)
     end
 end
 
--- ---------- Anti-AFK implementation ----------
+-- Anti-AFK
 local autoAntiAFK = false
 local antiAFKConnection = nil
 local antiAFKBackupTask = nil
 
 local function enableAntiAFK()
     if antiAFKConnection then return end
-    -- VirtualUser capture on Idled
     antiAFKConnection = player.Idled:Connect(function()
-        -- Capture and click to fool AFK detection
         pcall(function()
             VirtualUser:CaptureController()
             VirtualUser:ClickButton2(Vector2.new(0,0))
         end)
-        -- Also do a tiny nudge if configured (backup)
         if CONFIG.AntiAFKBackupNudge then
-            local ok, err = pcall(function()
+            pcall(function()
                 local char = player.Character
                 if char and char:FindFirstChild("HumanoidRootPart") then
                     local root = char.HumanoidRootPart
@@ -315,11 +300,9 @@ local function enableAntiAFK()
                     root.CFrame = orig
                 end
             end)
-            if not ok then dprint("AntiAFK nudge failed:", err) end
         end
     end)
 
-    -- periodic backup nudges so long as enabled (helps if Idled not firing in some environments)
     antiAFKBackupTask = task.spawn(function()
         while autoAntiAFK do
             task.wait(CONFIG.AntiAFKNudgeInterval)
@@ -342,7 +325,6 @@ local function enableAntiAFK()
             end
         end
     end)
-
     dprint("AntiAFK enabled")
 end
 
@@ -351,11 +333,10 @@ local function disableAntiAFK()
         antiAFKConnection:Disconnect()
         antiAFKConnection = nil
     end
-    -- setting autoAntiAFK false will allow the backup task to exit naturally
     dprint("AntiAFK disabled")
 end
 
--- ---------- GUI (Main + Settings) with reliable minimize button ----------
+-- GUI creation (with floating always-visible minimize button)
 local function createGui()
     local existing = player:WaitForChild("PlayerGui"):FindFirstChild("AutoEggsGui")
     if existing then existing:Destroy() end
@@ -364,6 +345,7 @@ local function createGui()
     screenGui.Name = "AutoEggsGui"
     screenGui.ResetOnSpawn = false
     screenGui.Parent = player:WaitForChild("PlayerGui")
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
     local frame = Instance.new("Frame")
     frame.Name = "MainFrame"
@@ -372,13 +354,12 @@ local function createGui()
     frame.BackgroundColor3 = Color3.fromRGB(28,28,30)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
-    frame.ZIndex = 2
-
+    frame.ZIndex = 5
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
 
-    -- Title (left aligned so minimize button won't overlap)
+    -- Title
     local title = Instance.new("TextLabel", frame)
-    title.Size = UDim2.new(1, -44, 0, 28) -- leave room for minimize on right
+    title.Size = UDim2.new(1, -44, 0, 28)
     title.Position = UDim2.new(0, 6, 0, 6)
     title.BackgroundTransparency = 1
     title.Text = "Auto Farm GUI"
@@ -386,23 +367,7 @@ local function createGui()
     title.TextSize = 18
     title.TextColor3 = Color3.new(1,1,1)
     title.TextXAlignment = Enum.TextXAlignment.Left
-    title.ZIndex = 3
-
-    -- Reliable minimize button (top-right of frame). ZIndex high so visible.
-    local minimizeBtn = Instance.new("TextButton", frame)
-    minimizeBtn.Name = "MinimizeBtn"
-    minimizeBtn.Size = UDim2.new(0, 30, 0, 24)
-    minimizeBtn.Position = UDim2.new(1, -36, 0, 6)
-    minimizeBtn.AnchorPoint = Vector2.new(0, 0)
-    minimizeBtn.BackgroundColor3 = Color3.fromRGB(60,60,62)
-    minimizeBtn.BorderSizePixel = 0
-    minimizeBtn.Font = Enum.Font.SourceSansBold
-    minimizeBtn.TextSize = 18
-    minimizeBtn.TextColor3 = Color3.new(1,1,1)
-    minimizeBtn.Text = "—" -- minimize icon
-    minimizeBtn.AutoButtonColor = true
-    minimizeBtn.ZIndex = 20
-    Instance.new("UICorner", minimizeBtn).CornerRadius = UDim.new(0,6)
+    title.ZIndex = 6
 
     -- Tabs
     local tabMainBtn = Instance.new("TextButton", frame)
@@ -413,7 +378,7 @@ local function createGui()
     tabMainBtn.TextSize = 14
     tabMainBtn.BackgroundColor3 = Color3.fromRGB(40,40,42)
     tabMainBtn.TextColor3 = Color3.new(1,1,1)
-    tabMainBtn.ZIndex = 3
+    tabMainBtn.ZIndex = 6
 
     local tabSettingsBtn = Instance.new("TextButton", frame)
     tabSettingsBtn.Size = UDim2.new(0, 120, 0, 28)
@@ -423,19 +388,19 @@ local function createGui()
     tabSettingsBtn.TextSize = 14
     tabSettingsBtn.BackgroundColor3 = Color3.fromRGB(40,40,42)
     tabSettingsBtn.TextColor3 = Color3.new(1,1,1)
-    tabSettingsBtn.ZIndex = 3
+    tabSettingsBtn.ZIndex = 6
 
     local content = Instance.new("Frame", frame)
     content.Size = UDim2.new(1, -12, 1, -108)
     content.Position = UDim2.new(0, 6, 0, 72)
     content.BackgroundTransparency = 1
-    content.ZIndex = 2
+    content.ZIndex = 5
 
     -- Main pane
     local mainPane = Instance.new("Frame", content)
     mainPane.Size = UDim2.new(1,0,1,0)
     mainPane.BackgroundTransparency = 1
-    mainPane.ZIndex = 2
+    mainPane.ZIndex = 5
 
     local eggsBtn = Instance.new("TextButton", mainPane)
     eggsBtn.Size = UDim2.new(0, 110, 0, 50)
@@ -443,7 +408,7 @@ local function createGui()
     eggsBtn.BackgroundColor3 = Color3.fromRGB(55,120,70)
     eggsBtn.Font = Enum.Font.SourceSansBold; eggsBtn.TextSize = 14
     eggsBtn.TextColor3 = Color3.new(1,1,1); eggsBtn.Text = "Auto Eggs: OFF"
-    eggsBtn.ZIndex = 2
+    eggsBtn.ZIndex = 5
 
     local easterBtn = Instance.new("TextButton", mainPane)
     easterBtn.Size = UDim2.new(0, 110, 0, 50)
@@ -451,7 +416,7 @@ local function createGui()
     easterBtn.BackgroundColor3 = Color3.fromRGB(200,120,40)
     easterBtn.Font = Enum.Font.SourceSansBold; easterBtn.TextSize = 14
     easterBtn.TextColor3 = Color3.new(1,1,1); easterBtn.Text = "Auto Easter: OFF"
-    easterBtn.ZIndex = 2
+    easterBtn.ZIndex = 5
 
     local combinedBtn = Instance.new("TextButton", mainPane)
     combinedBtn.Size = UDim2.new(0, 110, 0, 50)
@@ -459,7 +424,7 @@ local function createGui()
     combinedBtn.BackgroundColor3 = Color3.fromRGB(120,60,200)
     combinedBtn.Font = Enum.Font.SourceSansBold; combinedBtn.TextSize = 14
     combinedBtn.TextColor3 = Color3.new(1,1,1); combinedBtn.Text = "Auto Combined: OFF"
-    combinedBtn.ZIndex = 2
+    combinedBtn.ZIndex = 5
 
     local antiAFKBtn = Instance.new("TextButton", mainPane)
     antiAFKBtn.Size = UDim2.new(0, 110, 0, 40)
@@ -467,7 +432,7 @@ local function createGui()
     antiAFKBtn.BackgroundColor3 = Color3.fromRGB(50,90,160)
     antiAFKBtn.Font = Enum.Font.SourceSansBold; antiAFKBtn.TextSize = 14
     antiAFKBtn.TextColor3 = Color3.new(1,1,1); antiAFKBtn.Text = "Anti-AFK: OFF"
-    antiAFKBtn.ZIndex = 2
+    antiAFKBtn.ZIndex = 5
 
     local testDemonBtn = Instance.new("TextButton", mainPane)
     testDemonBtn.Size = UDim2.new(0, 110, 0, 40)
@@ -475,14 +440,14 @@ local function createGui()
     testDemonBtn.BackgroundColor3 = Color3.fromRGB(180,60,60)
     testDemonBtn.Font = Enum.Font.SourceSansBold; testDemonBtn.TextSize = 14
     testDemonBtn.TextColor3 = Color3.new(1,1,1); testDemonBtn.Text = "Auto TestDemon: OFF"
-    testDemonBtn.ZIndex = 2
+    testDemonBtn.ZIndex = 5
 
     -- Settings pane
     local settingsPane = Instance.new("Frame", content)
     settingsPane.Size = UDim2.new(1,0,1,0)
     settingsPane.BackgroundTransparency = 1
     settingsPane.Visible = false
-    settingsPane.ZIndex = 2
+    settingsPane.ZIndex = 5
 
     local tpLabel = Instance.new("TextLabel", settingsPane)
     tpLabel.Size = UDim2.new(0, 220, 0, 22)
@@ -492,7 +457,7 @@ local function createGui()
     tpLabel.Font = Enum.Font.SourceSans
     tpLabel.TextSize = 14
     tpLabel.TextColor3 = Color3.new(1,1,1)
-    tpLabel.ZIndex = 2
+    tpLabel.ZIndex = 5
 
     local tpBox = Instance.new("TextBox", settingsPane)
     tpBox.Size = UDim2.new(0, 120, 0, 28)
@@ -501,7 +466,7 @@ local function createGui()
     tpBox.Text = tostring(CONFIG.TeleportInterval)
     tpBox.Font = Enum.Font.SourceSans
     tpBox.TextSize = 14
-    tpBox.ZIndex = 2
+    tpBox.ZIndex = 5
 
     local clLabel = Instance.new("TextLabel", settingsPane)
     clLabel.Size = UDim2.new(0, 220, 0, 22)
@@ -511,7 +476,7 @@ local function createGui()
     clLabel.Font = Enum.Font.SourceSans
     clLabel.TextSize = 14
     clLabel.TextColor3 = Color3.new(1,1,1)
-    clLabel.ZIndex = 2
+    clLabel.ZIndex = 5
 
     local clBox = Instance.new("TextBox", settingsPane)
     clBox.Size = UDim2.new(0, 120, 0, 28)
@@ -520,7 +485,7 @@ local function createGui()
     clBox.Text = tostring(CONFIG.ClickInterval)
     clBox.Font = Enum.Font.SourceSans
     clBox.TextSize = 14
-    clBox.ZIndex = 2
+    clBox.ZIndex = 5
 
     local applyBtn = Instance.new("TextButton", settingsPane)
     applyBtn.Size = UDim2.new(0, 120, 0, 36)
@@ -530,7 +495,7 @@ local function createGui()
     applyBtn.TextSize = 14
     applyBtn.BackgroundColor3 = Color3.fromRGB(80,160,90)
     applyBtn.TextColor3 = Color3.new(1,1,1)
-    applyBtn.ZIndex = 2
+    applyBtn.ZIndex = 5
 
     local resetBtn = Instance.new("TextButton", settingsPane)
     resetBtn.Size = UDim2.new(0, 120, 0, 36)
@@ -540,7 +505,7 @@ local function createGui()
     resetBtn.TextSize = 14
     resetBtn.BackgroundColor3 = Color3.fromRGB(160,80,80)
     resetBtn.TextColor3 = Color3.new(1,1,1)
-    resetBtn.ZIndex = 2
+    resetBtn.ZIndex = 5
 
     local infoLabel = Instance.new("TextLabel", settingsPane)
     infoLabel.Size = UDim2.new(1, -12, 0, 34)
@@ -550,8 +515,9 @@ local function createGui()
     infoLabel.TextColor3 = Color3.new(1,1,1)
     infoLabel.Font = Enum.Font.SourceSansItalic
     infoLabel.TextSize = 12
-    infoLabel.ZIndex = 2
+    infoLabel.ZIndex = 5
 
+    -- Tabs show/hide
     local function showMain()
         mainPane.Visible = true
         settingsPane.Visible = false
@@ -564,19 +530,17 @@ local function createGui()
         tabMainBtn.BackgroundColor3 = Color3.fromRGB(40,40,42)
         tabSettingsBtn.BackgroundColor3 = Color3.fromRGB(60,60,62)
     end
-
     tabMainBtn.MouseButton1Click:Connect(showMain)
     tabSettingsBtn.MouseButton1Click:Connect(showSettings)
 
-    -- draggable (works when minimized too)
+    -- Draggable
     frame.Active = true
     do
         local dragging, dragStart, startPos, dragInput = false, nil, nil, nil
         local function updateDrag(input)
             if not dragging or not dragStart or not startPos then return end
             local delta = input.Position - dragStart
-            local newPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-            frame.Position = newPos
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
         end
         frame.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -595,7 +559,7 @@ local function createGui()
         UserInputService.InputChanged:Connect(function(input) if input == dragInput then updateDrag(input) end end)
     end
 
-    -- minimizable state
+    -- Minimize state
     local isMinimized = false
     local prevSize = frame.Size
     local prevPos = frame.Position
@@ -605,18 +569,11 @@ local function createGui()
         isMinimized = true
         prevSize = frame.Size
         prevPos = frame.Position
-        -- collapse to small bar, hide content but keep minimizeBtn visible
         frame.Size = UDim2.new(0, 240, 0, 36)
-        -- keep the frame's top-left in the same visual area
-        frame.Position = UDim2.new(prevPos.X.Scale, prevPos.X.Offset, prevPos.Y.Scale, prevPos.Y.Offset)
-        -- hide internal panes/buttons except the minimize button and title
         tabMainBtn.Visible = false
         tabSettingsBtn.Visible = false
         mainPane.Visible = false
         settingsPane.Visible = false
-        -- move minimizeBtn to remain on the right edge of the small bar
-        minimizeBtn.Position = UDim2.new(1, -36, 0, 6)
-        minimizeBtn.Text = "▢" -- restore icon
     end
 
     local function restore()
@@ -628,35 +585,97 @@ local function createGui()
         tabSettingsBtn.Visible = true
         mainPane.Visible = true
         settingsPane.Visible = false
-        minimizeBtn.Position = UDim2.new(1, -36, 0, 6)
-        minimizeBtn.Text = "—"
     end
 
-    -- minimize button click (guaranteed visible)
-    minimizeBtn.MouseButton1Click:Connect(function()
+    -- Floating minimize button (always visible, high ZIndex)
+    local floatMinBtn = Instance.new("TextButton")
+    floatMinBtn.Name = "FloatMinimizeBtn"
+    floatMinBtn.Size = UDim2.new(0, 34, 0, 30)
+    floatMinBtn.AnchorPoint = Vector2.new(0,0)
+    floatMinBtn.BackgroundColor3 = Color3.fromRGB(255,140,0)
+    floatMinBtn.BorderSizePixel = 0
+    floatMinBtn.AutoButtonColor = true
+    floatMinBtn.Font = Enum.Font.SourceSansBold
+    floatMinBtn.TextSize = 18
+    floatMinBtn.Text = "—"
+    floatMinBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    floatMinBtn.ZIndex = 100
+    floatMinBtn.Parent = screenGui
+
+    local function updateFloatBtn()
+        local ok, _ = pcall(function()
+            local absPos = frame.AbsolutePosition
+            local absSize = frame.AbsoluteSize
+            floatMinBtn.Position = UDim2.new(0, absPos.X + absSize.X - 36, 0, absPos.Y + 6)
+        end)
+        if not ok then
+            local fPos = frame.Position
+            local fSize = frame.Size
+            local xOff = (fPos.X.Offset or 0) + (fSize.X.Offset or 0) - 36
+            local yOff = (fPos.Y.Offset or 0) + 6
+            floatMinBtn.Position = UDim2.new(fPos.X.Scale, xOff, fPos.Y.Scale, yOff)
+        end
+    end
+    task.defer(updateFloatBtn)
+    frame:GetPropertyChangedSignal("Position"):Connect(updateFloatBtn)
+    frame:GetPropertyChangedSignal("Size"):Connect(updateFloatBtn)
+    frame:GetPropertyChangedSignal("AbsolutePosition"):Connect(updateFloatBtn)
+    frame:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateFloatBtn)
+
+    floatMinBtn.MouseButton1Click:Connect(function()
         if isMinimized then
             restore()
+            floatMinBtn.Text = "—"
         else
             minimize()
+            floatMinBtn.Text = "▢"
         end
     end)
 
-    -- keyboard shortcut: press M to toggle
+    -- M keyboard toggle
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
         if input.KeyCode == Enum.KeyCode.M then
-            if isMinimized then restore() else minimize() end
+            if isMinimized then
+                restore(); floatMinBtn.Text = "—"
+            else
+                minimize(); floatMinBtn.Text = "▢"
+            end
         end
     end)
 
-    -- expose some elements for the rest of the script
-    return screenGui, frame, eggsBtn, easterBtn, combinedBtn, antiAFKBtn, testDemonBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel
+    -- Return handles used by script
+    return {
+        screenGui = screenGui,
+        frame = frame,
+        eggsBtn = eggsBtn,
+        easterBtn = easterBtn,
+        combinedBtn = combinedBtn,
+        antiAFKBtn = antiAFKBtn,
+        testDemonBtn = testDemonBtn,
+        tpBox = tpBox,
+        clBox = clBox,
+        applyBtn = applyBtn,
+        resetBtn = resetBtn,
+        infoLabel = infoLabel,
+        floatMinBtn = floatMinBtn,
+    }
 end
 
--- ---------- main state ----------
-local gui, frame, eggsBtn, easterBtn, combinedBtn, antiAFKBtn, testDemonBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel = createGui()
+-- Create GUI and wire logic
+local ui = createGui()
+local eggsBtn = ui.eggsBtn
+local easterBtn = ui.easterBtn
+local combinedBtn = ui.combinedBtn
+local antiAFKBtn = ui.antiAFKBtn
+local testDemonBtn = ui.testDemonBtn
+local tpBox = ui.tpBox
+local clBox = ui.clBox
+local applyBtn = ui.applyBtn
+local resetBtn = ui.resetBtn
+local infoLabel = ui.infoLabel
+
 local autoEggs, autoEaster, autoCombined, autoTestDemon = false, false, false, false
-local autoAntiAFK = false
 local currentEggIndex, currentEasterIndex = 1, 1
 
 local function setModeStates(eggs, easter, combined)
@@ -678,25 +697,25 @@ combinedBtn.MouseButton1Click:Connect(function()
     if not autoCombined then setModeStates(false,false,true) else setModeStates(false,false,false) end
 end)
 
--- TestDemon toggle
 testDemonBtn.MouseButton1Click:Connect(function()
     autoTestDemon = not autoTestDemon
     testDemonBtn.Text = autoTestDemon and "Auto TestDemon: ON" or "Auto TestDemon: OFF"
 end)
 
--- Anti-AFK toggle handling
+local autoAnti = false
 antiAFKBtn.MouseButton1Click:Connect(function()
-    autoAntiAFK = not autoAntiAFK
-    if autoAntiAFK then
+    autoAnti = not autoAnti
+    if autoAnti then
         antiAFKBtn.Text = "Anti-AFK: ON"
+        autoAntiAFK = true
         enableAntiAFK()
     else
         antiAFKBtn.Text = "Anti-AFK: OFF"
+        autoAntiAFK = false
         disableAntiAFK()
     end
 end)
 
--- Settings apply/reset
 local function applySettingsFromInput()
     local tpVal = tonumber(tpBox.Text)
     local clVal = tonumber(clBox.Text)
@@ -721,21 +740,17 @@ end)
 tpBox.FocusLost:Connect(function(enterPressed) if enterPressed then applySettingsFromInput() end end)
 clBox.FocusLost:Connect(function(enterPressed) if enterPressed then applySettingsFromInput() end end)
 
--- ---------- worker loops (advance index ONLY on "removed" or "dead") ----------
-
--- Eggs loop
+-- Worker loops
 task.spawn(function()
     while true do
         if autoEggs then
             if not player.Character then player.CharacterAdded:Wait() end
             local eggModel, idx = getNextEggModel(currentEggIndex)
             if eggModel then
-                dprint("Found egg:", eggModel.Name, " — attacking until gone (or cancelled)")
+                dprint("Found egg:", eggModel.Name)
                 local status = attackModelPersist(eggModel, function() return autoEggs end)
                 if status == "removed" or status == "dead" then
                     currentEggIndex = (idx % #CONFIG.EggNames) + 1
-                else
-                    dprint("Egg attack ended with status:", status, "- not advancing index")
                 end
                 task.wait(0.08)
             else
@@ -747,19 +762,16 @@ task.spawn(function()
     end
 end)
 
--- Easter loop (enemy-only)
 task.spawn(function()
     while true do
         if autoEaster then
             if not player.Character then player.CharacterAdded:Wait() end
             local model, idx = getNextEasterModel(currentEasterIndex)
             if model then
-                dprint("Found Easter target:", model.Name, " — attacking until gone (enemy only)")
+                dprint("Found Easter target:", model.Name)
                 local status = attackModelPersist(model, function() return autoEaster end)
                 if status == "removed" or status == "dead" then
                     currentEasterIndex = (idx % #CONFIG.EasterNames) + 1
-                else
-                    dprint("Easter attack ended with status:", status, "- not advancing index")
                 end
                 task.wait(0.08)
             else
@@ -771,36 +783,28 @@ task.spawn(function()
     end
 end)
 
--- Combined loop: egg then enemy-easter; each waits to finish and advances index only on removal/death
 task.spawn(function()
     while true do
         if autoCombined then
             if not player.Character then player.CharacterAdded:Wait() end
-
             local eggModel, eggIdx = getNextEggModel(currentEggIndex)
             if eggModel then
-                dprint("Combined: attacking egg:", eggModel.Name)
+                dprint("Combined attacking egg:", eggModel.Name)
                 local status = attackModelPersist(eggModel, function() return autoCombined end)
                 if status == "removed" or status == "dead" then
                     currentEggIndex = (eggIdx % #CONFIG.EggNames) + 1
-                else
-                    dprint("Combined egg attack ended with status:", status)
                 end
                 task.wait(0.08)
             end
-
             local easterModel, easterIdx = getNextEasterModel(currentEasterIndex)
             if easterModel then
-                dprint("Combined: attacking Easter (enemy only):", easterModel.Name)
+                dprint("Combined attacking Easter:", easterModel.Name)
                 local status = attackModelPersist(easterModel, function() return autoCombined end)
                 if status == "removed" or status == "dead" then
                     currentEasterIndex = (easterIdx % #CONFIG.EasterNames) + 1
-                else
-                    dprint("Combined easter attack ended with status:", status)
                 end
                 task.wait(0.08)
             end
-
             if not eggModel and not easterModel then
                 task.wait(1.2)
             end
@@ -810,19 +814,16 @@ task.spawn(function()
     end
 end)
 
--- TestDemon loop (single-target)
 task.spawn(function()
     while true do
         if autoTestDemon then
             if not player.Character then player.CharacterAdded:Wait() end
             local model = getTestDemonModel()
             if model then
-                dprint("Found TestDemon:", model.Name, " — attacking until gone (or cancelled)")
+                dprint("Found TestDemon:", model.Name)
                 local status = attackModelPersist(model, function() return autoTestDemon end)
                 if status == "removed" or status == "dead" then
-                    dprint("TestDemon removed/dead. (will retry if it respawns)")
-                else
-                    dprint("TestDemon attack ended with status:", status, "- will not advance anything (single target)")
+                    dprint("TestDemon gone.")
                 end
                 task.wait(0.08)
             else
@@ -833,3 +834,5 @@ task.spawn(function()
         end
     end
 end)
+
+-- End of script
