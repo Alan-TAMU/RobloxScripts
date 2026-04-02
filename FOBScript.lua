@@ -1,3 +1,4 @@
+-- Full updated script (drop-in replacement)
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
@@ -34,9 +35,7 @@ local CONFIG = {
 	NeutralDelay = 0.01,
 
 	DemonContainerPath = {"Unbreakable", "Characters", "Demon"},
-	DemonModelPath = {"Unbreakable", "Characters", "Demon", "TestDemon"},
-	DemonHumanoidPath = {"Unbreakable", "Characters", "Demon", "TestDemon", "Humanoid"},
-	DemonLabel = "TestDemon",
+	DemonName = "Giant Demon Spawn",
 	DemonTeleportOffset = Vector3.new(0, 0, 3),
 	DemonDelay = 0.01,
 	AutoDemonOnStart = false,
@@ -227,23 +226,6 @@ local function getDemonContainer()
 	return current
 end
 
-local function getInstanceFromPath(pathParts, startNode)
-	local current = startNode or workspace
-
-	for _, name in ipairs(pathParts) do
-		if not current then
-			return nil
-		end
-
-		current = current:FindFirstChild(name)
-		if not current then
-			return nil
-		end
-	end
-
-	return current
-end
-
 local function getPlayerTeamFolder()
 	local character = player.Character
 	if character and character.Parent then
@@ -315,15 +297,34 @@ local function getHumanModel()
 	return nil
 end
 
+-- Updated getDemonModel: tries CONFIG.DemonName, then TestDemon, then any demon-like model
 local function getDemonModel()
-	local demon = getInstanceFromPath(CONFIG.DemonModelPath)
+	local container = getDemonContainer()
+	if not container then
+		return nil
+	end
+
+	-- 1) try configured name
+	local demon = container:FindFirstChild(CONFIG.DemonName)
 	if demon and demon:IsA("Model") then
 		return demon
 	end
 
-	local humanoid = getInstanceFromPath(CONFIG.DemonHumanoidPath)
-	if humanoid and humanoid:IsA("Humanoid") and humanoid.Parent and humanoid.Parent:IsA("Model") then
-		return humanoid.Parent
+	-- 2) try TestDemon explicitly (path you provided)
+	local test = container:FindFirstChild("TestDemon")
+	if test and test:IsA("Model") then
+		return test
+	end
+
+	-- 3) fallback: any model that looks like a demon (has Humanoid + HRP)
+	for _, child in ipairs(container:GetChildren()) do
+		if child and child:IsA("Model") then
+			local humanoid = child:FindFirstChild("Humanoid")
+			local hrp = child:FindFirstChild("HumanoidRootPart")
+			if humanoid and humanoid:IsA("Humanoid") and hrp and hrp:IsA("BasePart") then
+				return child
+			end
+		end
 	end
 
 	return nil
@@ -358,19 +359,14 @@ local function getHumanHumanoid()
 end
 
 local function getDemonHumanoid()
-	local humanoid = getInstanceFromPath(CONFIG.DemonHumanoidPath)
-	if humanoid and humanoid:IsA("Humanoid") then
-		return humanoid
-	end
-
 	local demon = getDemonModel()
 	if not demon then
 		return nil
 	end
 
-	local fallbackHumanoid = demon:FindFirstChild("Humanoid")
-	if fallbackHumanoid and fallbackHumanoid:IsA("Humanoid") then
-		return fallbackHumanoid
+	local humanoid = demon:FindFirstChild("Humanoid")
+	if humanoid and humanoid:IsA("Humanoid") then
+		return humanoid
 	end
 
 	return nil
@@ -859,6 +855,7 @@ local function getTeamNPCDelay(targetType)
 	return 0.1
 end
 
+-- Updated: Enemy general info unchanged for orc/human
 local function getEnemyGeneralInfo()
 	local teamFolder = getPlayerTeamFolder()
 
@@ -912,6 +909,7 @@ local function getEnemyGeneralLabel()
 	return info.label
 end
 
+-- Updated: dynamic team target info; Neutral branch now returns the discovered demon model name
 local function getTeamTargetInfo()
 	local teamFolder = getPlayerTeamFolder()
 
@@ -932,8 +930,10 @@ local function getTeamTargetInfo()
 			delay = CONFIG.GeneralDelay
 		}
 	elseif teamFolder == "Neutral" then
+		local demonModel = getDemonModel()
+		local labelName = (demonModel and demonModel.Name) or CONFIG.DemonName
 		return {
-			label = CONFIG.DemonLabel,
+			label = labelName,
 			targetPart = getDemonTargetPart(),
 			targetHumanoid = getDemonHumanoid(),
 			offset = CONFIG.DemonTeleportOffset,
@@ -2443,11 +2443,18 @@ task.spawn(function()
 	end
 end)
 
+-- Updated autoDemon loop: attacks whichever demon model is present (Giant Demon Spawn or TestDemon)
 task.spawn(function()
 	while true do
 		if autoDemon then
-			teleportToDemon()
-			attackWithSword(getDemonHumanoid(), CONFIG.DemonLabel)
+			local demonModel = getDemonModel()
+			local demonHumanoid = getDemonHumanoid()
+
+			if demonModel and demonHumanoid and demonHumanoid.Health > 0 then
+				teleportToDemon()
+				attackWithSword(demonHumanoid, demonModel.Name)
+			end
+
 			task.wait(CONFIG.DemonDelay)
 		else
 			task.wait(0.1)
@@ -2484,21 +2491,24 @@ task.spawn(function()
 			local teamFolder = getPlayerTeamFolder()
 
 			if teamFolder == "Neutral" then
+				-- Updated neutral/demon handling to use dynamic demon name/model
 				local demonHumanoid = getDemonHumanoid()
 				local demonTargetPart = getDemonTargetPart()
+				local demonModel = getDemonModel()
+				local demonName = (demonModel and demonModel.Name) or CONFIG.DemonName
 
 				if demonHumanoid and demonHumanoid.Health > 0 and demonTargetPart then
 					teamTargetCollectSawDemon = true
 					teamTargetCollectTriggered = false
 
 					teleportToDemon()
-					attackWithSword(demonHumanoid, CONFIG.DemonLabel)
+					attackWithSword(demonHumanoid, demonName)
 					task.wait(CONFIG.DemonDelay)
 				else
 					if teamTargetCollectSawDemon and not teamTargetCollectTriggered then
 						timedCollectEndTime = math.max(timedCollectEndTime, time() + 180)
 						teamTargetCollectTriggered = true
-						dprint(CONFIG.DemonLabel .. " defeated, starting Auto Collect for 180 seconds")
+						dprint(demonName .. " defeated, starting Auto Collect for 180 seconds")
 					end
 
 					task.wait(0.1)
