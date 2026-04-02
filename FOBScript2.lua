@@ -1,5 +1,5 @@
 -- AutoFarm (team-aware) — immediate cancel on toggle + advance index only on actual removal/death
--- Includes Anti-AFK toggle (client-side)
+-- Includes Anti-AFK toggle (client-side) + Auto TestDemon button
 -- Paste into a LocalScript (StarterPlayerScripts)
 
 local Players = game:GetService("Players")
@@ -214,6 +214,18 @@ local function getNextEasterModel(currentIndex)
     return nil, nextIndex
 end
 
+-- ---------- TestDemon finder ----------
+local function getTestDemonModel()
+    local un = workspace:FindFirstChild("Unbreakable")
+    if not un then return nil end
+    local chars = un:FindFirstChild("Characters")
+    if not chars then return nil end
+    local demonFolder = chars:FindFirstChild("Demon")
+    if not demonFolder then return nil end
+    local model = demonFolder:FindFirstChild("TestDemon")
+    return model
+end
+
 -- ---------- core attack routine ----------
 -- signature: attackModelPersist(targetModel, shouldContinue)
 -- shouldContinue is a function returning true when we should keep attacking (used to cancel mid-target)
@@ -285,16 +297,13 @@ local antiAFKBackupTask = nil
 
 local function enableAntiAFK()
     if antiAFKConnection then return end
-    -- VirtualUser capture on Idled
     antiAFKConnection = player.Idled:Connect(function()
-        -- Capture and click to fool AFK detection
         pcall(function()
             VirtualUser:CaptureController()
             VirtualUser:ClickButton2(Vector2.new(0,0))
         end)
-        -- Also do a tiny nudge if configured (backup)
         if CONFIG.AntiAFKBackupNudge then
-            local ok, err = pcall(function()
+            pcall(function()
                 local char = player.Character
                 if char and char:FindFirstChild("HumanoidRootPart") then
                     local root = char.HumanoidRootPart
@@ -304,17 +313,14 @@ local function enableAntiAFK()
                     root.CFrame = orig
                 end
             end)
-            if not ok then dprint("AntiAFK nudge failed:", err) end
         end
     end)
 
-    -- periodic backup nudges so long as enabled (helps if Idled not firing in some environments)
     antiAFKBackupTask = task.spawn(function()
         while autoAntiAFK do
             task.wait(CONFIG.AntiAFKNudgeInterval)
             if not autoAntiAFK then break end
             pcall(function()
-                -- perform a minimal input via VirtualUser as well
                 VirtualUser:CaptureController()
                 VirtualUser:ClickButton2(Vector2.new(0,0))
             end)
@@ -341,10 +347,7 @@ local function disableAntiAFK()
         antiAFKConnection:Disconnect()
         antiAFKConnection = nil
     end
-    if antiAFKBackupTask then
-        -- this will exit when autoAntiAFK is false; set false and wait a tick
-        antiAFKBackupTask = nil
-    end
+    -- setting autoAntiAFK false will allow the backup task to exit naturally
     dprint("AntiAFK disabled")
 end
 
@@ -360,8 +363,8 @@ local function createGui()
 
     local frame = Instance.new("Frame")
     frame.Name = "MainFrame"
-    frame.Size = UDim2.new(0, 420, 0, 220)
-    frame.Position = UDim2.new(0, 24, 0.6, -110)
+    frame.Size = UDim2.new(0, 420, 0, 240)
+    frame.Position = UDim2.new(0, 24, 0.6, -120)
     frame.BackgroundColor3 = Color3.fromRGB(28,28,30)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
@@ -397,7 +400,7 @@ local function createGui()
     tabSettingsBtn.TextColor3 = Color3.new(1,1,1)
 
     local content = Instance.new("Frame", frame)
-    content.Size = UDim2.new(1, -12, 1, -92)
+    content.Size = UDim2.new(1, -12, 1, -108)
     content.Position = UDim2.new(0, 6, 0, 72)
     content.BackgroundTransparency = 1
 
@@ -433,6 +436,13 @@ local function createGui()
     antiAFKBtn.BackgroundColor3 = Color3.fromRGB(50,90,160)
     antiAFKBtn.Font = Enum.Font.SourceSansBold; antiAFKBtn.TextSize = 14
     antiAFKBtn.TextColor3 = Color3.new(1,1,1); antiAFKBtn.Text = "Anti-AFK: OFF"
+
+    local testDemonBtn = Instance.new("TextButton", mainPane)
+    testDemonBtn.Size = UDim2.new(0, 110, 0, 40)
+    testDemonBtn.Position = UDim2.new(0, 126, 0, 66)
+    testDemonBtn.BackgroundColor3 = Color3.fromRGB(180,60,60)
+    testDemonBtn.Font = Enum.Font.SourceSansBold; testDemonBtn.TextSize = 14
+    testDemonBtn.TextColor3 = Color3.new(1,1,1); testDemonBtn.Text = "Auto TestDemon: OFF"
 
     -- Settings pane
     local settingsPane = Instance.new("Frame", content)
@@ -543,12 +553,13 @@ local function createGui()
         UserInputService.InputChanged:Connect(function(input) if input == dragInput then updateDrag(input) end end)
     end
 
-    return screenGui, eggsBtn, easterBtn, combinedBtn, antiAFKBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel
+    return screenGui, eggsBtn, easterBtn, combinedBtn, antiAFKBtn, testDemonBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel
 end
 
 -- ---------- main state ----------
-local gui, eggsBtn, easterBtn, combinedBtn, antiAFKBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel = createGui()
-local autoEggs, autoEaster, autoCombined = false, false, false
+local gui, eggsBtn, easterBtn, combinedBtn, antiAFKBtn, testDemonBtn, tpBox, clBox, applyBtn, resetBtn, infoLabel = createGui()
+local autoEggs, autoEaster, autoCombined, autoTestDemon = false, false, false, false
+local autoAntiAFK = false
 local currentEggIndex, currentEasterIndex = 1, 1
 
 local function setModeStates(eggs, easter, combined)
@@ -568,6 +579,12 @@ easterBtn.MouseButton1Click:Connect(function()
 end)
 combinedBtn.MouseButton1Click:Connect(function()
     if not autoCombined then setModeStates(false,false,true) else setModeStates(false,false,false) end
+end)
+
+-- TestDemon toggle
+testDemonBtn.MouseButton1Click:Connect(function()
+    autoTestDemon = not autoTestDemon
+    testDemonBtn.Text = autoTestDemon and "Auto TestDemon: ON" or "Auto TestDemon: OFF"
 end)
 
 -- Anti-AFK toggle handling
@@ -618,7 +635,6 @@ task.spawn(function()
             if eggModel then
                 dprint("Found egg:", eggModel.Name, " — attacking until gone (or cancelled)")
                 local status = attackModelPersist(eggModel, function() return autoEggs end)
-                -- only advance if target was actually removed or died
                 if status == "removed" or status == "dead" then
                     currentEggIndex = (idx % #CONFIG.EggNames) + 1
                 else
@@ -689,6 +705,30 @@ task.spawn(function()
             end
 
             if not eggModel and not easterModel then
+                task.wait(1.2)
+            end
+        else
+            task.wait(0.12)
+        end
+    end
+end)
+
+-- TestDemon loop (single-target)
+task.spawn(function()
+    while true do
+        if autoTestDemon then
+            if not player.Character then player.CharacterAdded:Wait() end
+            local model = getTestDemonModel()
+            if model then
+                dprint("Found TestDemon:", model.Name, " — attacking until gone (or cancelled)")
+                local status = attackModelPersist(model, function() return autoTestDemon end)
+                if status == "removed" or status == "dead" then
+                    dprint("TestDemon removed/dead. (will retry if it respawns)")
+                else
+                    dprint("TestDemon attack ended with status:", status, "- will not advance anything (single target)")
+                end
+                task.wait(0.08)
+            else
                 task.wait(1.2)
             end
         else
