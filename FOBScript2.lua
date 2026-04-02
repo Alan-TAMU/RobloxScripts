@@ -1,5 +1,4 @@
--- AutoFarm (team-aware) — immediate cancel on toggle + advance index only on actual removal/death
--- Includes Anti-AFK toggle (client-side) + Auto TestDemon button + minimizable GUI
+-- AutoFarm (team-aware) — reliable minimizable GUI + M shortcut
 -- Paste into a LocalScript (StarterPlayerScripts)
 
 local Players = game:GetService("Players")
@@ -326,7 +325,6 @@ local function enableAntiAFK()
             task.wait(CONFIG.AntiAFKNudgeInterval)
             if not autoAntiAFK then break end
             pcall(function()
-                -- perform a minimal input via VirtualUser as well
                 VirtualUser:CaptureController()
                 VirtualUser:ClickButton2(Vector2.new(0,0))
             end)
@@ -357,7 +355,7 @@ local function disableAntiAFK()
     dprint("AntiAFK disabled")
 end
 
--- ---------- GUI (Main + Settings) with minimizable capability ----------
+-- ---------- GUI (Main + Settings) with reliable minimize button ----------
 local function createGui()
     local existing = player:WaitForChild("PlayerGui"):FindFirstChild("AutoEggsGui")
     if existing then existing:Destroy() end
@@ -374,11 +372,13 @@ local function createGui()
     frame.BackgroundColor3 = Color3.fromRGB(28,28,30)
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
+    frame.ZIndex = 2
 
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
 
+    -- Title (left aligned so minimize button won't overlap)
     local title = Instance.new("TextLabel", frame)
-    title.Size = UDim2.new(1, -36, 0, 28) -- leave room for minimize button on the right
+    title.Size = UDim2.new(1, -44, 0, 28) -- leave room for minimize on right
     title.Position = UDim2.new(0, 6, 0, 6)
     title.BackgroundTransparency = 1
     title.Text = "Auto Farm GUI"
@@ -386,18 +386,22 @@ local function createGui()
     title.TextSize = 18
     title.TextColor3 = Color3.new(1,1,1)
     title.TextXAlignment = Enum.TextXAlignment.Left
+    title.ZIndex = 3
 
+    -- Reliable minimize button (top-right of frame). ZIndex high so visible.
     local minimizeBtn = Instance.new("TextButton", frame)
     minimizeBtn.Name = "MinimizeBtn"
-    minimizeBtn.Size = UDim2.new(0, 24, 0, 24)
-    minimizeBtn.Position = UDim2.new(1, -30, 0, 6)
-    minimizeBtn.BackgroundColor3 = Color3.fromRGB(50,50,52)
+    minimizeBtn.Size = UDim2.new(0, 30, 0, 24)
+    minimizeBtn.Position = UDim2.new(1, -36, 0, 6)
+    minimizeBtn.AnchorPoint = Vector2.new(0, 0)
+    minimizeBtn.BackgroundColor3 = Color3.fromRGB(60,60,62)
     minimizeBtn.BorderSizePixel = 0
     minimizeBtn.Font = Enum.Font.SourceSansBold
     minimizeBtn.TextSize = 18
     minimizeBtn.TextColor3 = Color3.new(1,1,1)
     minimizeBtn.Text = "—" -- minimize icon
     minimizeBtn.AutoButtonColor = true
+    minimizeBtn.ZIndex = 20
     Instance.new("UICorner", minimizeBtn).CornerRadius = UDim.new(0,6)
 
     -- Tabs
@@ -409,6 +413,7 @@ local function createGui()
     tabMainBtn.TextSize = 14
     tabMainBtn.BackgroundColor3 = Color3.fromRGB(40,40,42)
     tabMainBtn.TextColor3 = Color3.new(1,1,1)
+    tabMainBtn.ZIndex = 3
 
     local tabSettingsBtn = Instance.new("TextButton", frame)
     tabSettingsBtn.Size = UDim2.new(0, 120, 0, 28)
@@ -418,16 +423,19 @@ local function createGui()
     tabSettingsBtn.TextSize = 14
     tabSettingsBtn.BackgroundColor3 = Color3.fromRGB(40,40,42)
     tabSettingsBtn.TextColor3 = Color3.new(1,1,1)
+    tabSettingsBtn.ZIndex = 3
 
     local content = Instance.new("Frame", frame)
     content.Size = UDim2.new(1, -12, 1, -108)
     content.Position = UDim2.new(0, 6, 0, 72)
     content.BackgroundTransparency = 1
+    content.ZIndex = 2
 
     -- Main pane
     local mainPane = Instance.new("Frame", content)
     mainPane.Size = UDim2.new(1,0,1,0)
     mainPane.BackgroundTransparency = 1
+    mainPane.ZIndex = 2
 
     local eggsBtn = Instance.new("TextButton", mainPane)
     eggsBtn.Size = UDim2.new(0, 110, 0, 50)
@@ -435,6 +443,7 @@ local function createGui()
     eggsBtn.BackgroundColor3 = Color3.fromRGB(55,120,70)
     eggsBtn.Font = Enum.Font.SourceSansBold; eggsBtn.TextSize = 14
     eggsBtn.TextColor3 = Color3.new(1,1,1); eggsBtn.Text = "Auto Eggs: OFF"
+    eggsBtn.ZIndex = 2
 
     local easterBtn = Instance.new("TextButton", mainPane)
     easterBtn.Size = UDim2.new(0, 110, 0, 50)
@@ -442,6 +451,7 @@ local function createGui()
     easterBtn.BackgroundColor3 = Color3.fromRGB(200,120,40)
     easterBtn.Font = Enum.Font.SourceSansBold; easterBtn.TextSize = 14
     easterBtn.TextColor3 = Color3.new(1,1,1); easterBtn.Text = "Auto Easter: OFF"
+    easterBtn.ZIndex = 2
 
     local combinedBtn = Instance.new("TextButton", mainPane)
     combinedBtn.Size = UDim2.new(0, 110, 0, 50)
@@ -449,6 +459,7 @@ local function createGui()
     combinedBtn.BackgroundColor3 = Color3.fromRGB(120,60,200)
     combinedBtn.Font = Enum.Font.SourceSansBold; combinedBtn.TextSize = 14
     combinedBtn.TextColor3 = Color3.new(1,1,1); combinedBtn.Text = "Auto Combined: OFF"
+    combinedBtn.ZIndex = 2
 
     local antiAFKBtn = Instance.new("TextButton", mainPane)
     antiAFKBtn.Size = UDim2.new(0, 110, 0, 40)
@@ -456,6 +467,7 @@ local function createGui()
     antiAFKBtn.BackgroundColor3 = Color3.fromRGB(50,90,160)
     antiAFKBtn.Font = Enum.Font.SourceSansBold; antiAFKBtn.TextSize = 14
     antiAFKBtn.TextColor3 = Color3.new(1,1,1); antiAFKBtn.Text = "Anti-AFK: OFF"
+    antiAFKBtn.ZIndex = 2
 
     local testDemonBtn = Instance.new("TextButton", mainPane)
     testDemonBtn.Size = UDim2.new(0, 110, 0, 40)
@@ -463,12 +475,14 @@ local function createGui()
     testDemonBtn.BackgroundColor3 = Color3.fromRGB(180,60,60)
     testDemonBtn.Font = Enum.Font.SourceSansBold; testDemonBtn.TextSize = 14
     testDemonBtn.TextColor3 = Color3.new(1,1,1); testDemonBtn.Text = "Auto TestDemon: OFF"
+    testDemonBtn.ZIndex = 2
 
     -- Settings pane
     local settingsPane = Instance.new("Frame", content)
     settingsPane.Size = UDim2.new(1,0,1,0)
     settingsPane.BackgroundTransparency = 1
     settingsPane.Visible = false
+    settingsPane.ZIndex = 2
 
     local tpLabel = Instance.new("TextLabel", settingsPane)
     tpLabel.Size = UDim2.new(0, 220, 0, 22)
@@ -478,6 +492,7 @@ local function createGui()
     tpLabel.Font = Enum.Font.SourceSans
     tpLabel.TextSize = 14
     tpLabel.TextColor3 = Color3.new(1,1,1)
+    tpLabel.ZIndex = 2
 
     local tpBox = Instance.new("TextBox", settingsPane)
     tpBox.Size = UDim2.new(0, 120, 0, 28)
@@ -486,6 +501,7 @@ local function createGui()
     tpBox.Text = tostring(CONFIG.TeleportInterval)
     tpBox.Font = Enum.Font.SourceSans
     tpBox.TextSize = 14
+    tpBox.ZIndex = 2
 
     local clLabel = Instance.new("TextLabel", settingsPane)
     clLabel.Size = UDim2.new(0, 220, 0, 22)
@@ -495,6 +511,7 @@ local function createGui()
     clLabel.Font = Enum.Font.SourceSans
     clLabel.TextSize = 14
     clLabel.TextColor3 = Color3.new(1,1,1)
+    clLabel.ZIndex = 2
 
     local clBox = Instance.new("TextBox", settingsPane)
     clBox.Size = UDim2.new(0, 120, 0, 28)
@@ -503,6 +520,7 @@ local function createGui()
     clBox.Text = tostring(CONFIG.ClickInterval)
     clBox.Font = Enum.Font.SourceSans
     clBox.TextSize = 14
+    clBox.ZIndex = 2
 
     local applyBtn = Instance.new("TextButton", settingsPane)
     applyBtn.Size = UDim2.new(0, 120, 0, 36)
@@ -512,6 +530,7 @@ local function createGui()
     applyBtn.TextSize = 14
     applyBtn.BackgroundColor3 = Color3.fromRGB(80,160,90)
     applyBtn.TextColor3 = Color3.new(1,1,1)
+    applyBtn.ZIndex = 2
 
     local resetBtn = Instance.new("TextButton", settingsPane)
     resetBtn.Size = UDim2.new(0, 120, 0, 36)
@@ -521,6 +540,7 @@ local function createGui()
     resetBtn.TextSize = 14
     resetBtn.BackgroundColor3 = Color3.fromRGB(160,80,80)
     resetBtn.TextColor3 = Color3.new(1,1,1)
+    resetBtn.ZIndex = 2
 
     local infoLabel = Instance.new("TextLabel", settingsPane)
     infoLabel.Size = UDim2.new(1, -12, 0, 34)
@@ -530,6 +550,7 @@ local function createGui()
     infoLabel.TextColor3 = Color3.new(1,1,1)
     infoLabel.Font = Enum.Font.SourceSansItalic
     infoLabel.TextSize = 12
+    infoLabel.ZIndex = 2
 
     local function showMain()
         mainPane.Visible = true
@@ -584,15 +605,17 @@ local function createGui()
         isMinimized = true
         prevSize = frame.Size
         prevPos = frame.Position
-        -- collapse to small bar, hide content
-        frame.Size = UDim2.new(0, 220, 0, 36)
-        frame.Position = UDim2.new(prevPos.X.Scale, prevPos.X.Offset, prevPos.Y.Scale, prevPos.Y.Offset) -- keep top-left
-        mainPane.Visible = false
-        settingsPane.Visible = false
+        -- collapse to small bar, hide content but keep minimizeBtn visible
+        frame.Size = UDim2.new(0, 240, 0, 36)
+        -- keep the frame's top-left in the same visual area
+        frame.Position = UDim2.new(prevPos.X.Scale, prevPos.X.Offset, prevPos.Y.Scale, prevPos.Y.Offset)
+        -- hide internal panes/buttons except the minimize button and title
         tabMainBtn.Visible = false
         tabSettingsBtn.Visible = false
-        -- shrink title to full width
-        title.Size = UDim2.new(1, -36, 0, 28)
+        mainPane.Visible = false
+        settingsPane.Visible = false
+        -- move minimizeBtn to remain on the right edge of the small bar
+        minimizeBtn.Position = UDim2.new(1, -36, 0, 6)
         minimizeBtn.Text = "▢" -- restore icon
     end
 
@@ -603,14 +626,27 @@ local function createGui()
         frame.Position = prevPos
         tabMainBtn.Visible = true
         tabSettingsBtn.Visible = true
-        -- restore to main pane by default
         mainPane.Visible = true
         settingsPane.Visible = false
+        minimizeBtn.Position = UDim2.new(1, -36, 0, 6)
         minimizeBtn.Text = "—"
     end
 
+    -- minimize button click (guaranteed visible)
     minimizeBtn.MouseButton1Click:Connect(function()
-        if isMinimized then restore() else minimize() end
+        if isMinimized then
+            restore()
+        else
+            minimize()
+        end
+    end)
+
+    -- keyboard shortcut: press M to toggle
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.KeyCode == Enum.KeyCode.M then
+            if isMinimized then restore() else minimize() end
+        end
     end)
 
     -- expose some elements for the rest of the script
